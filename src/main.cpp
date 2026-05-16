@@ -2,6 +2,7 @@
 #include "Subsystems/modular_lift.h"
 #include "chassis.h"
 #include "pros/imu.hpp"
+#include "distanceReset.h"
 
 
 pros::MotorGroup lift_motors({1, -2}, pros::MotorGear::blue); 
@@ -12,7 +13,18 @@ pros::Motor backl(5);
 pros::Motor backr(6);
 pros::Imu imu(7);
 
+pros::Distance front(8);
+pros::Distance right(9);
+pros::Distance left(10);
+pros::Distance back(11);
+
+DistanceSensor front_sensor(&front, 0, 0, 0);
+DistanceSensor right_sensor(&right, 0, 0, 0);
+DistanceSensor left_sensor(&left, 0, 0, 0);
+DistanceSensor back_sensor(&back, 0, 0, 0);
+
 Chassis chassis(frontl, frontr, backl, backr, imu, {.trackWidth = 10, .wheelDiameter = 3.25, .gearRatio = 4/3});
+DistanceReset distanceReset(&chassis, {front_sensor, right_sensor, left_sensor, back_sensor}, 20, 3);
 
 //Automatic K matrices Calculator in python
 /*
@@ -63,7 +75,7 @@ print(f".K = Eigen::Matrix<float, 1, 2>{{{{{K[0][0]:.4f}f, {K[0][1]:.4f}f}}}},")
 
 LiftConfig my_lift_config = {
 	.K = Eigen::Matrix<float, 1, 2>{{2.9331f, 1.4557f}},
-    .kG = 1500.0f,                                  // Millivolts required to hold arm horizontal
+    .kG = 1750.0f,                                  // Millivolts required to hold arm horizontal
     .gear_ratio = 12.0f / 84.0f,                    // E.g., 12T gear driving an 84T gear
     .tolerance = 5.0f                               // 5 degrees error is "close enough"
 };
