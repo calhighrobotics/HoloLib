@@ -102,6 +102,8 @@ struct XDriveVoltages {
 
 struct ChassisConfig {
   float trackWidth;
+  float drivetrainWidth = 0.0f;
+  float drivetrainLength = 0.0f;
   float wheelDiameter;
   float gearRatio;
   bool kfEnabled = true;
@@ -122,7 +124,7 @@ struct MoveParams {
   float maxTranslationSpeed = 127.0f;
   float maxRotationSpeed = 127.0f;
   float minSpeed = 0.0f;
-  float exitRange = 1.0f;
+  float exitRange = 2.0f;
   float earlyExitRange = 0.0f;
   uint32_t timeout = 5000;
   bool async = true;
@@ -182,6 +184,7 @@ public:
                     DriveCurves drivecurves);
 
   enum class HeadingMode { FollowPath, HoldAngle };
+  enum class CurveDirection { Auto, CW, CCW };
 
   void followPathPID(const std::vector<PathPoint> &path, float lookahead_inches,
                      MoveParams params = {},
@@ -193,12 +196,22 @@ public:
   void turnToPoint(float tx, float ty, MoveParams params = {});
 
   void moveToPoint(float tx, float ty, MoveParams params = {},
-                   bool angleCorrection = false);
+                   bool angleCorrection = true);
+
+  void moveRelative(float forward, float sideways, MoveParams params = {},
+                    bool holdHeading = true);
+
+  void moveDistance(float distance, MoveParams params = {},
+                    bool holdHeading = true);
+
+  void strafeDistance(float distance, MoveParams params = {},
+                      bool holdHeading = true);
 
   void moveToPose(float tx, float ty, float targetThetaDeg,
                   MoveParams params = {});
 
-  void curveCircle(float targetThetaDeg, float radius, MoveParams params = {});
+  void curveCircle(float targetThetaDeg, float radius, MoveParams params = {},
+                   CurveDirection direction = CurveDirection::Auto);
 
   MotionHandler motion;
 
