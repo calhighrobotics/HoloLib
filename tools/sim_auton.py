@@ -50,20 +50,46 @@ def split_args(text):
     return args
 
 
-def number(expr):
+def number(expr, constants=None):
+    expr = expr.strip()
+    if constants and expr in constants:
+        return constants[expr]
     match = re.search(r"[-+]?\d*\.?\d+", expr)
     if not match:
         return None
     return float(match.group(0))
 
 
-def get_arg_val(args, index, default):
-    """Safely extracts numeric arguments, preserving 0.0 without treating it as falsy."""
-    if index < len(args):
-        val = number(args[index])
-        if val is not None:
-            return val
-    return default
+def parse_constants(source):
+    """Scans code for float, double, int, and constexpr constant declarations."""
+    constants = {}
+    pattern = re.compile(
+        r"\b(?:float|double|auto|int|constexpr|const)\s+(\w+)\s*=\s*([-+]?\d*\.?\d+)\s*f?;",
+        re.IGNORECASE
+    )
+    for name, val in pattern.findall(source):
+        constants[name] = float(val)
+    return constants
+
+
+def parse_poses(source, constants):
+    """Parses standard C++ struct initializations of type Pose, e.g., Pose a = {x, y, theta};"""
+    poses = {}
+    pattern = re.compile(
+        r"\bPose\s+(\w+)\s*(?:=\s*)?\{([^}]+)\};"
+    )
+    for name, raw_args in pattern.findall(source):
+        parts = split_args(raw_args)
+        if len(parts) >= 2:
+            x_val = number(parts[0], constants)
+            y_val = number(parts[1], constants)
+            theta_val = number(parts[2], constants) if len(parts) >= 3 else None
+            poses[name] = {
+                "x": x_val if x_val is not None else 0.0,
+                "y": y_val if y_val is not None else 0.0,
+                "theta": theta_val if theta_val is not None else 0.0
+            }
+    return poses
 
 
 def strip_comments(text):
@@ -77,12 +103,12 @@ def strip_comments(text):
         re.DOTALL
     )
     def replacer(match):
-        if match.group(4) is not None: # Block comment -> strip
+        if match.group(4) is not None: 
             return ""
-        elif match.group(5) is not None: # Line comment -> strip
+        elif match.group(5) is not None: 
             return ""
         else:
-            return match.group(0) # Keep strings intact
+            return match.group(0) 
     return pattern.sub(replacer, text)
 
 
@@ -104,13 +130,14 @@ def extract_simulation(source):
     return source[start : i - 1]
 
 
-def parse_path_strings(body):
+def parse_path_strings(source_or_body):
+    """Parses raw paths globally from source to find globally declared path definitions."""
     paths = {}
     pattern = re.compile(
         r"std::string\s+(\w+)\s*=\s*R\"\((.*?)\)\";", re.DOTALL
     )
 
-    for name, raw in pattern.findall(body):
+    for name, raw in pattern.findall(source_or_body):
         points = []
         for line in raw.splitlines():
             parts = [p.strip() for p in line.split(",") if p.strip()]
@@ -119,7 +146,6 @@ def parse_path_strings(body):
             try:
                 x_val = float(parts[0])
                 y_val = float(parts[1])
-                # Propagate the previous coordinate's theta if it is not explicitly provided
                 if len(parts) >= 3:
                     theta_val = float(parts[2])
                 else:
@@ -247,12 +273,25 @@ def find_lookahead_point(path, curr_pos, lookahead_distance, start_idx):
     return lookahead_pt, closest_idx
 
 
-def simulate(body):
-    paths = parse_path_strings(body)
+def simulate(source, body):
+    constants = parse_constants(source)
+    poses_table = parse_poses(source, constants)
+    paths = parse_path_strings(source)
+    constants.update(parse_constants(body))
+    poses_table.update(parse_poses(body, constants))
+    
     calls = find_calls(body)
     poses = [{"x": 0.0, "y": 0.0, "theta": 0.0}]
     events = []
     used_paths = set()
+
+    def get_arg_val_local(args, index, default):
+        """Resolves local parameters against the constants symbol table."""
+        if index < len(args):
+            val = number(args[index], constants)
+            if val is not None:
+                return val
+        return default
 
     def append_motion(target, label):
         nonlocal poses
@@ -261,26 +300,30 @@ def simulate(body):
 
     for name, args in calls:
         cur = poses[-1]
-        if name == "setPose" and len(args) >= 2:
-            target = {
-                "x": get_arg_val(args, 0, 0.0),
-                "y": get_arg_val(args, 1, 0.0),
-                "theta": get_arg_val(args, 2, 0.0),
-            }
+        if name == "setPose":
+            if len(args) == 1:
+                pose_name = args[0].strip()
+                if pose_name in poses_table:
+                    target = dict(poses_table[pose_name])
+                else:
+                    target = {"x": 0.0, "y": 0.0, "theta": 0.0}
+            else:
+                target = {
+                    "x": get_arg_val_local(args, 0, 0.0),
+                    "y": get_arg_val_local(args, 1, 0.0),
+                    "theta": get_arg_val_local(args, 2, 0.0),
+                }
             poses.append(target)
             events.append({"label": f"setPose({target['x']}, {target['y']}, {target['theta']})", "pose": target})
         elif name == "moveToPoint" and len(args) >= 2:
-            tx = get_arg_val(args, 0, cur["x"])
-            ty = get_arg_val(args, 1, cur["y"])
+            tx = get_arg_val_local(args, 0, cur["x"])
+            ty = get_arg_val_local(args, 1, cur["y"])
             
-            # Default C++ parameter behavior for angleCorrection is true
             angle_correction = True
             if len(args) >= 4:
-                # If an explicit 4th argument exists, evaluate its boolean state
                 angle_correction = "false" not in args[3].lower()
             
             if angle_correction:
-                # Navigational heading (clockwise with 0 degrees pointing North) calculated using atan2(dx, dy)
                 target_theta = math.degrees(math.atan2(tx - cur["x"], ty - cur["y"]))
             else:
                 target_theta = cur["theta"]
@@ -293,13 +336,13 @@ def simulate(body):
             append_motion(target, f"moveToPoint({target['x']}, {target['y']})")
         elif name == "moveToPose" and len(args) >= 3:
             target = {
-                "x": get_arg_val(args, 0, cur["x"]),
-                "y": get_arg_val(args, 1, cur["y"]),
-                "theta": get_arg_val(args, 2, cur["theta"]),
+                "x": get_arg_val_local(args, 0, cur["x"]),
+                "y": get_arg_val_local(args, 1, cur["y"]),
+                "theta": get_arg_val_local(args, 2, cur["theta"]),
             }
             append_motion(target, f"moveToPose({target['x']}, {target['y']}, {target['theta']})")
         elif name in ("moveDistance", "strafeDistance") and args:
-            distance = get_arg_val(args, 0, 0.0)
+            distance = get_arg_val_local(args, 0, 0.0)
             forward, strafe = heading_vectors(cur["theta"])
             vx, vy = forward if name == "moveDistance" else strafe
             target = {
@@ -309,8 +352,8 @@ def simulate(body):
             }
             append_motion(target, f"{name}({distance})")
         elif name == "moveRelative" and len(args) >= 2:
-            forward_dist = get_arg_val(args, 0, 0.0)
-            sideways_dist = get_arg_val(args, 1, 0.0)
+            forward_dist = get_arg_val_local(args, 0, 0.0)
+            sideways_dist = get_arg_val_local(args, 1, 0.0)
             forward, strafe = heading_vectors(cur["theta"])
             target = {
                 "x": cur["x"] + forward_dist * forward[0] + sideways_dist * strafe[0],
@@ -320,18 +363,17 @@ def simulate(body):
             append_motion(target, f"moveRelative({forward_dist}, {sideways_dist})")
         elif name == "turnToHeading" and args:
             target = dict(cur)
-            target["theta"] = get_arg_val(args, 0, cur["theta"])
+            target["theta"] = get_arg_val_local(args, 0, cur["theta"])
             append_motion(target, f"turnToHeading({target['theta']})")
         elif name == "turnToPoint" and len(args) >= 2:
-            tx = get_arg_val(args, 0, cur["x"])
-            ty = get_arg_val(args, 1, cur["y"])
+            tx = get_arg_val_local(args, 0, cur["x"])
+            ty = get_arg_val_local(args, 1, cur["y"])
             target = dict(cur)
-            # Navigational heading calculated using atan2(dx, dy)
             target["theta"] = math.degrees(math.atan2(tx - cur["x"], ty - cur["y"]))
             append_motion(target, f"turnToPoint({tx}, {ty})")
         elif name == "curveCircle" and len(args) >= 2:
-            target_theta = get_arg_val(args, 0, cur["theta"])
-            radius = abs(get_arg_val(args, 1, 0.0))
+            target_theta = get_arg_val_local(args, 0, cur["theta"])
+            radius = abs(get_arg_val_local(args, 1, 0.0))
             direction = parse_direction(args)
             delta = directed_delta(target_theta, cur["theta"], direction)
             side = 1.0 if delta >= 0 else -1.0
@@ -359,8 +401,7 @@ def simulate(body):
                 path = paths[path_name]
                 
                 if path:
-                    # Parse followPathPID arguments
-                    lookahead_dist = get_arg_val(args, 1, 10.0)
+                    lookahead_dist = get_arg_val_local(args, 1, 10.0)
                     
                     heading_mode = "FollowPath"
                     if "HeadingMode::HoldAngle" in joined:
@@ -368,20 +409,18 @@ def simulate(body):
                     elif "HeadingMode::CustomAngles" in joined:
                         heading_mode = "CustomAngles"
                         
-                    hold_angle_deg = get_arg_val(args, 4, 0.0)
+                    hold_angle_deg = get_arg_val_local(args, 4, 0.0)
                     
                     reversed_bool = False
                     if len(args) >= 6:
                         reversed_bool = "true" in args[5].lower()
                     
-                    # Generate fine spatial path coordinates
                     spatial_points = []
                     if math.hypot(path[0]['x'] - cur['x'], path[0]['y'] - cur['y']) > 0.5:
                         spatial_points.extend(sample_line(cur, path[0], step=0.5))
                     for idx in range(len(path) - 1):
                         spatial_points.extend(sample_line(path[idx], path[idx + 1], step=0.5))
                     
-                    # Simulate navigation heading tracking along the spatial coordinates
                     simulated_poses = []
                     current_theta = cur["theta"]
                     start_idx = 0
@@ -414,9 +453,8 @@ def simulate(body):
                                 if reversed_bool:
                                     target_heading += 180.0
                         
-                        # Apply angular tracking lag (simulating PID convergence step)
                         angle_err = directed_delta(target_heading, current_theta, "Auto")
-                        current_theta += angle_err * 0.25  # 25% convergence step per sample
+                        current_theta += angle_err * 0.25
                         current_theta = (current_theta + 180) % 360 - 180
                         
                         simulated_poses.append({
@@ -597,12 +635,10 @@ def main():
     args = parser.parse_args()
 
     source = Path(args.main).read_text()
-    
-    # Strip comments first to prevent commented-out lines from being executed/compiled in simulation
     clean_source = strip_comments(source)
     
     body = extract_simulation(clean_source)
-    poses, events = simulate(body)
+    poses, events = simulate(clean_source, body)
 
     OUTPUT_HTML = Path(args.out)
     OUTPUT_HTML.parent.mkdir(parents=True, exist_ok=True)
