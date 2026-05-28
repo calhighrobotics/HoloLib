@@ -65,6 +65,13 @@ void disabled() {
 
 void competition_initialize() {}
 
+/*
+To run the simulation place your autonomous code inside of this function.
+
+Then run these commands in the terminal:
+      python3 tools/sim_auton.py
+      open bin/auton_viewer.html
+*/
 void simulation()
 {
   chassis.setPose(0, 0, 0);
@@ -129,12 +136,9 @@ void simulation()
 5.432, 39.162, 37.629
 3.434, 39.071, 30.133
 1.435, 39.017, 20
-0, 39, 0
-0, 39, 0
 	)";
 
-  chassis.moveToPoint(36, 36, {}, true);
-  chassis.moveToPoint(52, 36, {}, true);
+  chassis.curveCircle(180, 12, {}, Chassis::CurveDirection::CW);
 }
 
 
@@ -205,7 +209,7 @@ void autonomous() {
 0, 39, 0
 	)";
 
-  chassis.moveToPoint(36, 36, {}, true);
+  chassis.curveCircle(180, 12, {}, Chassis::CurveDirection::CW);
 }
 
 void opcontrol() {

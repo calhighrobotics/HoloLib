@@ -19,16 +19,28 @@ private:
   Eigen::Matrix3f Q;
   Eigen::Matrix<float, 1, 3> H;
   float R;
+  float xProcessNoise = 0.01f, yProcessNoise = 0.01f, thetaProcessNoise = 0.001f, measurementNoise = 0.00045f;
+
 
 public:
+  void setProcessNoise(float xNoise, float yNoise, float thetaNoise, float measurementNoise) {
+    xProcessNoise = xNoise;
+    yProcessNoise = yNoise;
+    thetaProcessNoise = thetaNoise;
+    measurementNoise = measurementNoise;
+    Q << xProcessNoise, 0, 0, 0, yProcessNoise, 0, 0, 0, thetaProcessNoise;
+    R = measurementNoise;
+  }
+
+
   PoseEKF(float initial_x, float initial_y, float initial_theta) {
     x << initial_x, initial_y, initial_theta;
     P.setZero();
 
-    Q << 0.01f, 0, 0, 0, 0.01f, 0, 0, 0, 0.001f;
+    Q << xProcessNoise, 0, 0, 0, yProcessNoise, 0, 0, 0, thetaProcessNoise;
 
     H << 0, 0, 1;
-    R = 0.05f;
+    R = measurementNoise;
   }
 
   void predict(float dx_local, float dy_local, float dtheta) {
@@ -237,7 +249,8 @@ public:
 
   void waitUntil(float distance);
 
-
+  void setEKFGains(float xProcessNoise, float yProcessNoise, float thetaProcessNoise,
+                   float measurementNoise);
 
 private:
   pros::Motor frontLeft, frontRight, backLeft, backRight;
@@ -255,6 +268,7 @@ private:
   float targetHeadingDriveControl = 0;
   friend void odomTaskTrampoline(void *);
   float motionDistTraveled = 0.0f;
+  float xProcessNoise = 0.01f, yProcessNoise = 0.01f, thetaProcessNoise = 0.001f, measurementNoise = 0.00045f;
 };
 
 inline float getAngleError(float target, float current) {

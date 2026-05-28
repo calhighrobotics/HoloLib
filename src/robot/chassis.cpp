@@ -231,6 +231,7 @@ void Chassis::odometryTask() {
     pros::Task::delay_until(&now, 10);
   }
 }
+
 XDriveVoltages Chassis::calculateHolonomic(float vx, float vy, float vt) {
 
   constexpr float scale = 12000.0f / 127.0f;
@@ -395,6 +396,7 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
     return;
   }
 
+  
   motion.enqueue(
       [=, this]() {
 
@@ -971,7 +973,6 @@ void Chassis::moveToPose(float tx, float ty, float targetThetaDeg,
       },
       params.async);
 }
-
 void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
                           CurveDirection direction) {
   if (std::abs(radius) < 1e-3f) {
@@ -985,23 +986,30 @@ void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
         uint32_t settleStart = 0;
         constexpr uint32_t settleTime = 120;
         constexpr float angleExitDeg = 2.0f;
-        constexpr float radiusKp = 3.0f;
-        constexpr float arcKp = 2.0f;
 
+        PID xPID(0, 0, 0, 0);
+        PID yPID(0, 0, 0, 0);
         PID tPID(0, 0, 0, 0);
 
         Pose sp = getPose(false);
+        
         auto directedAngleError = [](float target, float current,
                                      CurveDirection dir) {
-          float shortest = getAngleError(target, current);
-          if (dir == CurveDirection::Auto || std::abs(shortest) < 1e-3f)
+          float shortest = getAngleError(target, current); 
+          if (dir == CurveDirection::Auto)
             return shortest;
 
-          float delta = std::fmod(target - current, 360.0f);
-          if (delta < 0.0f)
-            delta += 360.0f;
-
-          return dir == CurveDirection::CW ? delta : delta - 360.0f;
+          if (dir == CurveDirection::CW) {
+            if (shortest <= -90.0f) {
+              return shortest + 360.0f;
+            }
+            return shortest;
+          } else {
+            if (shortest >= 90.0f) {
+              return shortest - 360.0f;
+            }
+            return shortest;
+          }
         };
 
         float initErr = directedAngleError(targetThetaDeg, sp.theta, direction);
@@ -1039,8 +1047,6 @@ void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
             settleStart = 0;
           }
 
-          tPID.setGains(thetaSched.getGains(angleError));
-
           float toCenterX = centerX - curr.x;
           float toCenterY = centerY - curr.y;
           float distToCenter = std::hypot(toCenterX, toCenterY);
@@ -1052,11 +1058,13 @@ void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
           float centerSide = centerLocalX >= 0.0f ? 1.0f : -1.0f;
 
           float arcRemaining = std::abs(angleError) * DEG2RAD * arcRadius;
-          float outX_local = std::clamp(radiusError * radiusKp * centerSide,
-                                        -maxCurveTranslation * 0.45f,
-                                        maxCurveTranslation * 0.45f);
-          float outY_local = std::clamp(arcRemaining * arcKp, 0.0f,
-                                        maxCurveTranslation);
+
+          xPID.setGains(xSched.getGains(radiusError));
+          yPID.setGains(ySched.getGains(arcRemaining));
+          tPID.setGains(thetaSched.getGains(angleError));
+
+          float outX_local = (float)xPID.update(radiusError * centerSide);
+          float outY_local = (float)yPID.update(arcRemaining);
           float outT = (float)tPID.update(angleError);
 
           float mag = std::hypot(outX_local, outY_local);
@@ -1080,12 +1088,9 @@ void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
       params.async);
 }
 
-void Chassis::waitUntilDone()
-{
+void Chassis::waitUntilDone() {
   motion.waitUntilDone();
 }
-
-
 
 void Chassis::waitUntil(float dist) {
   uint32_t targetId = motion.getLastEnqueuedId();
@@ -1122,3 +1127,8 @@ void Chassis::cancelAllMotions() {
   motion.cancelAll();
   brake();
 }
+
+void Chassis::setEKFGains(float xProcessNoise, float yProcessNoise, float thetaProcessNoise, float measurementNoise) {
+  ekf.setProcessNoise(xProcessNoise, yProcessNoise, thetaProcessNoise, measurementNoise);
+}
+
