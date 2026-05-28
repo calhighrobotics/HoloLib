@@ -1,4 +1,5 @@
 #include "chassis.h"
+#include "pros/misc.hpp"
 #include <algorithm>
 #include <cmath>
 #include <fstream>
@@ -17,6 +18,7 @@ void Chassis::calibrate()
   frontLeft.tare_position();
   frontRight.tare_position();
   imu.reset(true);
+  pros::c::controller_rumble(pros::E_CONTROLLER_MASTER, ".");
 }
 
 std::vector<PathPoint> parsePathData(const std::string &input_source,
@@ -76,8 +78,8 @@ std::vector<PathPoint> parsePathData(const std::string &input_source,
   return path;
 }
 
-void GainScheduler::addStep(float threshold, float kP, float kI, float kD) {
-  schedules.push_back({threshold, {kP, kI, kD, 0.0f}});
+void GainScheduler::addStep(float threshold, float kP, float kI, float kD, float slew) {
+  schedules.push_back({threshold, {kP, kI, kD, 0.0f, slew}});
   std::sort(schedules.begin(), schedules.end(),
             [](const ScheduledGain &a, const ScheduledGain &b) {
               return a.threshold < b.threshold;
@@ -86,7 +88,7 @@ void GainScheduler::addStep(float threshold, float kP, float kI, float kD) {
 
 PIDGains GainScheduler::getGains(float error) const {
   if (schedules.empty())
-    return {0, 0, 0, 0};
+    return {0, 0, 0, 0, 0};
 
   float absErr = std::abs(error);
 
@@ -103,7 +105,9 @@ PIDGains GainScheduler::getGains(float error) const {
       float t = (absErr - lo.threshold) / (hi.threshold - lo.threshold);
       return {lo.gains.kP + t * (hi.gains.kP - lo.gains.kP),
               lo.gains.kI + t * (hi.gains.kI - lo.gains.kI),
-              lo.gains.kD + t * (hi.gains.kD - lo.gains.kD), 0.0f};
+              lo.gains.kD + t * (hi.gains.kD - lo.gains.kD), 
+              0.0f,
+              lo.gains.slew + t * (hi.gains.slew - lo.gains.slew)};
     }
   }
 
@@ -220,7 +224,11 @@ void Chassis::odometryTask() {
     currentPose.x = ekf.getX();
     currentPose.y = ekf.getY();
     currentPose.theta = ekf.getTheta();
-
+    if(velocityCalculationsOn) {
+      currentPose.velocity.vx = local_delta.x() / 0.01;
+      currentPose.velocity.vy = local_delta.y() / 0.01;
+      currentPose.velocity.w = d_theta_meas / 0.01;
+    }
     poseMutex.give();
     prev_fl = raw_fl;
     prev_fr = raw_fr;
@@ -281,6 +289,10 @@ void Chassis::setPose(float x, float y, float theta) {
   poseMutex.give();
 }
 
+void Chassis::setPose(Pose pose) {
+  setPose(pose.x, pose.y, pose.theta);
+}
+
 Pose Chassis::getPose(bool radians) {
   poseMutex.take();
   Pose p = currentPose;
@@ -293,89 +305,141 @@ Pose Chassis::getPose(bool radians) {
 void Chassis::setXGains(std::vector<ScheduledGain> steps) {
   xSched.clear();
   for (auto &s : steps)
-    xSched.addStep(s.threshold, s.gains.kP, s.gains.kI, s.gains.kD);
+    xSched.addStep(s.threshold, s.gains.kP, s.gains.kI, s.gains.kD, s.gains.slew);
 }
 
 void Chassis::setYGains(std::vector<ScheduledGain> steps) {
   ySched.clear();
   for (auto &s : steps)
-    ySched.addStep(s.threshold, s.gains.kP, s.gains.kI, s.gains.kD);
+    ySched.addStep(s.threshold, s.gains.kP, s.gains.kI, s.gains.kD, s.gains.slew);
 }
 
 void Chassis::setThetaGains(std::vector<ScheduledGain> steps) {
   thetaSched.clear();
   for (auto &s : steps)
-    thetaSched.addStep(s.threshold, s.gains.kP, s.gains.kI, s.gains.kD);
+    thetaSched.addStep(s.threshold, s.gains.kP, s.gains.kI, s.gains.kD, s.gains.slew);
 }
 
 void Chassis::driveControl(float forward, float sideways, float rotation,
-                           DriveCurves drivecurves, bool fieldCentric, float headingOffset, DriveCorrection correction) {
-    
+                           DriveCurves drivecurves,
+                           bool fieldCentric,
+                           float headingOffset,
+                           DriveCorrection correction)
+{
     static bool headingInitialized = false;
     static float targetHeading = 0.0f;
-    static PID headingPID(correction.kP, 0.0f, 0.0f, 0.0f); 
+    static PID headingPID(correction.kP, 0.0f, 0.0f, 0.0f);
     static uint32_t lastRotationTime = 0;
-
+    constexpr float MAX_DRIVE_INPUT = 127.0f;
     if (!headingInitialized) {
         targetHeading = getPose(false).theta;
         headingInitialized = true;
     }
+    auto applyCurve = [&](float x, const DriveCurve& c) -> float {
+        if (std::abs(x) < c.deadzone)
+            return 0.0f;
 
-    auto applyCurve = [](float x, const DriveCurve& c) -> float {
-        if (std::abs(x) < c.deadzone) return 0.0f;
-        float sign = (x >= 0) ? 1.0f : -1.0f;
-        x = (std::abs(x) - c.deadzone) / (1.0f - c.deadzone) * sign;
-        x = std::pow(std::abs(x), c.curve_multipler) * sign;
-        if (std::abs(x) > 0.0f && std::abs(x) < c.minimum_output)
-            x = sign * c.minimum_output;
-        return x;
+        float sign = (x >= 0.0f) ? 1.0f : -1.0f;
+        float normalized =
+            (std::abs(x) - c.deadzone) /
+            (MAX_DRIVE_INPUT - c.deadzone);
+
+        normalized = std::clamp(normalized, 0.0f, 1.0f);
+        normalized =
+            std::pow(normalized, c.curve_multipler);
+
+        float output = normalized * MAX_DRIVE_INPUT;
+        if (output > 0.0f &&
+            output < c.minimum_output)
+        {
+            output = c.minimum_output;
+        }
+
+        return output * sign;
     };
-
     forward  = applyCurve(forward,  drivecurves.movement);
     sideways = applyCurve(sideways, drivecurves.movement);
 
-    float robotForward = forward;
+    float robotForward  = forward;
     float robotSideways = sideways;
-
     if (fieldCentric) {
-        float adjustedTheta = getPose(false).theta - headingOffset;
+
+        float adjustedTheta =
+            getPose(false).theta - headingOffset;
+
         float thetaRad = adjustedTheta * DEG2RAD;
-        
-        robotSideways = sideways * std::cos(thetaRad) - forward * std::sin(thetaRad);
-        robotForward  = sideways * std::sin(thetaRad) + forward * std::cos(thetaRad);
-        float maxInput = std::max(std::abs(forward), std::abs(sideways));
-        float maxRotated = std::max(std::abs(robotForward), std::abs(robotSideways));
-        
-        if (maxRotated > 0.0f) {
-            float scale = maxInput / maxRotated;
-            robotSideways *= scale;
+
+        robotSideways =
+            sideways * std::cos(thetaRad) -
+            forward  * std::sin(thetaRad);
+
+        robotForward =
+            sideways * std::sin(thetaRad) +
+            forward  * std::cos(thetaRad);
+        float inputMagnitude =
+            std::sqrt(forward * forward +
+                      sideways * sideways);
+
+        float rotatedMagnitude =
+            std::sqrt(robotForward * robotForward +
+                      robotSideways * robotSideways);
+
+        if (rotatedMagnitude > 0.001f) {
+
+            float scale =
+                inputMagnitude / rotatedMagnitude;
+
             robotForward  *= scale;
+            robotSideways *= scale;
         }
     }
+    if (std::abs(rotation) >= drivecurves.rotation.deadzone) {
 
-    if (std::abs(rotation) >= 5.0f) {
-        rotation = applyCurve(rotation, drivecurves.rotation);
-        targetHeading = getPose(false).theta; 
+        rotation =
+            applyCurve(rotation,
+                       drivecurves.rotation);
+
+        targetHeading = getPose(false).theta;
+
         lastRotationTime = pros::millis();
+
     } else {
         if (pros::millis() - lastRotationTime < 500) {
+
             rotation = 0.0f;
             targetHeading = getPose(false).theta;
+
         } else {
-          
-          if(correction.correctionOn) {
-            float currentHeading = getPose(false).theta;
-            float angleError = getAngleError(targetHeading, currentHeading);
-            
-            headingPID.setGains(thetaSched.getGains(angleError));
-            
-            rotation = (float)headingPID.update(angleError);
-            rotation = std::clamp(rotation, -30.0f, 30.0f);
-          }
+
+            if (correction.correctionOn) {
+
+                float currentHeading =
+                    getPose(false).theta;
+
+                float angleError =
+                    getAngleError(targetHeading,
+                                  currentHeading);
+
+                headingPID.setGains(
+                    thetaSched.getGains(angleError));
+
+                rotation =
+                    (float)headingPID.update(angleError);
+
+                rotation =
+                    std::clamp(rotation,
+                               -30.0f,
+                               30.0f);
+            }
         }
     }
-
-    setMotorVoltages(calculateHolonomic(robotSideways, robotForward, rotation));
+    setMotorVoltages(
+        calculateHolonomic(
+            robotSideways,
+            robotForward,
+            rotation
+        )
+    );
 }
 
 enum class HeadingMode { 
@@ -396,7 +460,7 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
     return;
   }
 
-  
+
   motion.enqueue(
       [=, this]() {
 
@@ -1101,14 +1165,11 @@ void Chassis::waitUntil(float dist) {
 
     uint32_t runningId = motion.getCurrentRunningId();
     bool empty = motion.isQueueEmpty();
-
-    // If the queue is empty and the target motion has not started, it was cancelled.
     if (empty && runningId < targetId) {
       break;
     }
 
     if (runningId >= targetId) {
-      // If we are currently executing the target motion or a newer one
       if (runningId > targetId || currentDist >= dist) {
         break;
       }
@@ -1132,3 +1193,7 @@ void Chassis::setEKFGains(float xProcessNoise, float yProcessNoise, float thetaP
   ekf.setProcessNoise(xProcessNoise, yProcessNoise, thetaProcessNoise, measurementNoise);
 }
 
+void Chassis::setVelocityCalculations(bool state)
+{
+  velocityCalculationsOn = state;
+}

@@ -96,10 +96,16 @@ public:
   }
 };
 
+struct VelocityComponents
+{
+  float vx, vy, w;
+};
+
 struct Pose {
   float x = 0;
   float y = 0;
   float theta = 0;
+  VelocityComponents velocity{0, 0, 0};
 };
 
 struct PathPoint {
@@ -160,13 +166,13 @@ std::vector<PathPoint> parsePathData(const std::string &input_source,
 
 class GainScheduler {
 public:
-  void addStep(float threshold, float kP, float kI, float kD);
+  void addStep(float threshold, float kP, float kI, float kD, float slew = 0.0f);
 
   PIDGains getGains(float error) const;
 
   void clear();
 
-private:
+ private:
   std::vector<ScheduledGain> schedules;
 };
 
@@ -195,6 +201,8 @@ public:
   void setThetaGains(std::vector<ScheduledGain> steps);
 
   void setPose(float x, float y, float theta = 0.0f);
+
+  void setPose(Pose pose);
 
   Pose getPose(bool radians = false);
 
@@ -252,6 +260,10 @@ public:
   void setEKFGains(float xProcessNoise, float yProcessNoise, float thetaProcessNoise,
                    float measurementNoise);
 
+  void setVelocityCalculations(bool state);
+
+  
+
 private:
   pros::Motor frontLeft, frontRight, backLeft, backRight;
   pros::Imu imu;
@@ -269,6 +281,7 @@ private:
   friend void odomTaskTrampoline(void *);
   float motionDistTraveled = 0.0f;
   float xProcessNoise = 0.01f, yProcessNoise = 0.01f, thetaProcessNoise = 0.001f, measurementNoise = 0.00045f;
+  bool velocityCalculationsOn = false;
 };
 
 inline float getAngleError(float target, float current) {

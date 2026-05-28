@@ -4,14 +4,22 @@
 
 ModularLift::ModularLift(pros::MotorGroup *m_group, LiftMechanism t,
                          LiftConfig c)
-    : motors(m_group), type(t), config(c) {
+    : motors(m_group), type(t), config(c), is_running(false), 
+      cancel_request(false), is_settled(false), task(nullptr) {
   motors->set_encoder_units(pros::E_MOTOR_ENCODER_DEGREES);
 }
 
 ModularLift::~ModularLift() {
   cancel();
+  
+  uint32_t start_wait = pros::millis();
+  while (is_running && (pros::millis() - start_wait < 500)) {
+    pros::delay(10);
+  }
+
   if (task != nullptr) {
     delete task;
+    task = nullptr;
   }
 }
 
@@ -39,12 +47,19 @@ void ModularLift::moveTo(float target_motor_degrees) {
   target_mutex.take(TIMEOUT_MAX);
   target_position = target_motor_degrees;
   target_mutex.give();
+  
   if (is_running) {
-    return;
+    return; 
   }
 
   is_running = true;
   cancel_request = false;
+  is_settled = false;
+
+  if (task != nullptr) {
+    delete task;
+    task = nullptr;
+  }
 
   TaskParams *params = new TaskParams{this};
   task = new pros::Task(task_trampoline, params, "ModularLiftTask");
@@ -82,28 +97,27 @@ void ModularLift::controlLoopImpl() {
     Eigen::Vector2f x_ref(current_target, 0.0f);
 
     Eigen::Matrix<float, 1, 1> u_feedback = -config.K * (x - x_ref);
-
     float u_ff = calculateFeedforward(pos);
 
     float total_voltage = u_feedback(0, 0) + u_ff;
 
-    if (total_voltage > 12000.0f)
-      total_voltage = 12000.0f;
-    if (total_voltage < -12000.0f)
-      total_voltage = -12000.0f;
+    if (total_voltage > 12000.0f) total_voltage = 12000.0f;
+    if (total_voltage < -12000.0f) total_voltage = -12000.0f;
 
     motors->move_voltage(total_voltage);
 
     if (std::abs(pos - current_target) < config.tolerance &&
         std::abs(vel_deg_per_sec) < 10.0f) {
-      motors->move_voltage(u_ff);
-      break;
+      is_settled = true;
+    } else {
+      is_settled = false;
     }
 
     pros::Task::delay_until(&current_time, LOOP_DELAY_MS);
   }
 
   is_running = false;
+  is_settled = false;
 }
 
 void ModularLift::cancel() {
@@ -112,7 +126,9 @@ void ModularLift::cancel() {
 }
 
 void ModularLift::waitUntilDone() {
-  while (is_running) {
+  if (!is_running) return;
+
+  while (is_running && !is_settled) {
     pros::delay(10);
   }
 }
