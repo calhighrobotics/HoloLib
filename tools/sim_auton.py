@@ -57,10 +57,19 @@ def number(expr):
     return float(match.group(0))
 
 
-def extract_autonomous(source):
-    match = re.search(r"\bvoid\s+autonomous\s*\(\s*\)\s*\{", source)
+def get_arg_val(args, index, default):
+    """Safely extracts numeric arguments, preserving 0.0 without treating it as falsy."""
+    if index < len(args):
+        val = number(args[index])
+        if val is not None:
+            return val
+    return default
+
+
+def extract_simulation(source):
+    match = re.search(r"\bvoid\s+simulation\s*\(\s*\)\s*\{", source)
     if not match:
-        raise RuntimeError("Could not find autonomous() in src/main.cpp")
+        raise RuntimeError("Could not find simulation() in src/main.cpp")
 
     start = match.end()
     depth = 1
@@ -84,15 +93,23 @@ def parse_path_strings(body):
     for name, raw in pattern.findall(body):
         points = []
         for line in raw.splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 3:
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if len(parts) < 2:
                 continue
             try:
+                x_val = float(parts[0])
+                y_val = float(parts[1])
+                # If theta is missing (such as the end points), propagate the last heading
+                if len(parts) >= 3:
+                    theta_val = float(parts[2])
+                else:
+                    theta_val = points[-1]["theta"] if points else 0.0
+                
                 points.append(
                     {
-                        "x": float(parts[0]),
-                        "y": float(parts[1]),
-                        "theta": float(parts[2]),
+                        "x": x_val,
+                        "y": y_val,
+                        "theta": theta_val,
                     }
                 )
             except ValueError:
@@ -193,30 +210,29 @@ def simulate(body):
     for name, args in calls:
         cur = poses[-1]
         if name == "setPose" and len(args) >= 2:
-            theta = number(args[2]) if len(args) >= 3 else 0.0
             target = {
-                "x": number(args[0]) or 0.0,
-                "y": number(args[1]) or 0.0,
-                "theta": theta or 0.0,
+                "x": get_arg_val(args, 0, 0.0),
+                "y": get_arg_val(args, 1, 0.0),
+                "theta": get_arg_val(args, 2, 0.0),
             }
             poses.append(target)
-            events.append({"label": f"setPose({target['x']}, {target['y']})", "pose": target})
+            events.append({"label": f"setPose({target['x']}, {target['y']}, {target['theta']})", "pose": target})
         elif name == "moveToPoint" and len(args) >= 2:
             target = {
-                "x": number(args[0]) or cur["x"],
-                "y": number(args[1]) or cur["y"],
+                "x": get_arg_val(args, 0, cur["x"]),
+                "y": get_arg_val(args, 1, cur["y"]),
                 "theta": cur["theta"],
             }
             append_motion(target, f"moveToPoint({target['x']}, {target['y']})")
         elif name == "moveToPose" and len(args) >= 3:
             target = {
-                "x": number(args[0]) or cur["x"],
-                "y": number(args[1]) or cur["y"],
-                "theta": number(args[2]) or cur["theta"],
+                "x": get_arg_val(args, 0, cur["x"]),
+                "y": get_arg_val(args, 1, cur["y"]),
+                "theta": get_arg_val(args, 2, cur["theta"]),
             }
             append_motion(target, f"moveToPose({target['x']}, {target['y']}, {target['theta']})")
         elif name in ("moveDistance", "strafeDistance") and args:
-            distance = number(args[0]) or 0.0
+            distance = get_arg_val(args, 0, 0.0)
             forward, strafe = heading_vectors(cur["theta"])
             vx, vy = forward if name == "moveDistance" else strafe
             target = {
@@ -226,8 +242,8 @@ def simulate(body):
             }
             append_motion(target, f"{name}({distance})")
         elif name == "moveRelative" and len(args) >= 2:
-            forward_dist = number(args[0]) or 0.0
-            sideways_dist = number(args[1]) or 0.0
+            forward_dist = get_arg_val(args, 0, 0.0)
+            sideways_dist = get_arg_val(args, 1, 0.0)
             forward, strafe = heading_vectors(cur["theta"])
             target = {
                 "x": cur["x"] + forward_dist * forward[0] + sideways_dist * strafe[0],
@@ -237,17 +253,18 @@ def simulate(body):
             append_motion(target, f"moveRelative({forward_dist}, {sideways_dist})")
         elif name == "turnToHeading" and args:
             target = dict(cur)
-            target["theta"] = number(args[0]) or cur["theta"]
+            target["theta"] = get_arg_val(args, 0, cur["theta"])
             append_motion(target, f"turnToHeading({target['theta']})")
         elif name == "turnToPoint" and len(args) >= 2:
-            tx = number(args[0]) or cur["x"]
-            ty = number(args[1]) or cur["y"]
+            tx = get_arg_val(args, 0, cur["x"])
+            ty = get_arg_val(args, 1, cur["y"])
             target = dict(cur)
-            target["theta"] = math.degrees(math.atan2(ty - cur["y"], tx - cur["x"]))
+            # Standard compass rotation heading calculated using atan2(dx, dy)
+            target["theta"] = math.degrees(math.atan2(tx - cur["x"], ty - cur["y"]))
             append_motion(target, f"turnToPoint({tx}, {ty})")
         elif name == "curveCircle" and len(args) >= 2:
-            target_theta = number(args[0]) or cur["theta"]
-            radius = abs(number(args[1]) or 0.0)
+            target_theta = get_arg_val(args, 0, cur["theta"])
+            radius = abs(get_arg_val(args, 1, 0.0))
             direction = parse_direction(args)
             delta = directed_delta(target_theta, cur["theta"], direction)
             side = 1.0 if delta >= 0 else -1.0
@@ -445,14 +462,14 @@ def main():
     args = parser.parse_args()
 
     source = Path(args.main).read_text()
-    body = extract_autonomous(source)
+    body = extract_simulation(source)
     poses, events = simulate(body)
 
     OUTPUT_HTML = Path(args.out)
     OUTPUT_HTML.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_HTML.write_text(build_html(poses, events, args.field_size, args.map))
     print(f"Wrote {OUTPUT_HTML}")
-    print(f"Loaded {len(poses)} simulated poses from autonomous()")
+    print(f"Loaded {len(poses)} simulated poses from simulation()")
 
 
 if __name__ == "__main__":

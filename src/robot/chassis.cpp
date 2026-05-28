@@ -10,6 +10,15 @@ static constexpr float METER_TO_INCH = 39.3700787f;
 static constexpr float DEG2RAD = M_PI / 180.0f;
 static constexpr float RAD2DEG = 180.0f / M_PI;
 
+void Chassis::calibrate()
+{
+  backLeft.tare_position();
+  backRight.tare_position();
+  frontLeft.tare_position();
+  frontRight.tare_position();
+  imu.reset(true);
+}
+
 std::vector<PathPoint> parsePathData(const std::string &input_source,
                                      bool convertFromMeters) {
   std::vector<PathPoint> path;
@@ -152,31 +161,27 @@ Chassis::Chassis(pros::Motor fl, pros::Motor fr, pros::Motor bl, pros::Motor br,
   float h = imu.get_rotation();
   prev_heading = (std::isinf(h) || std::isnan(h)) ? 0.0f : h * DEG2RAD;
 
+  motionDistTraveled = 0.0f;
+  motion.setOnMotionStart([this]() {
+    poseMutex.take();
+    motionDistTraveled = 0.0f;
+    poseMutex.give();
+  });
+
   pros::Task odom_task(odomTaskTrampoline, this, "Odometry Task");
 }
 
 void Chassis::odometryTask() {
   uint32_t now = pros::millis();
-  const float dt = 0.01f;
-
-  const float d_per_deg =
-      (M_PI * config.wheelDiameter * config.gearRatio) / 360.0f;
-
-  const float drivetrain_width =
-      config.drivetrainWidth > 0.0f ? config.drivetrainWidth : 1.0f;
-  const float drivetrain_length =
-      config.drivetrainLength > 0.0f ? config.drivetrainLength
-                                      : drivetrain_width;
-  const float drivetrain_diagonal =
-      std::hypot(drivetrain_width, drivetrain_length);
-  const float x_component = drivetrain_length / drivetrain_diagonal;
-  const float y_component = drivetrain_width / drivetrain_diagonal;
+  const float d_per_deg = (M_PI * config.wheelDiameter * config.gearRatio) / 360.0f;
+  constexpr float wheel_angle = 45.0f * DEG2RAD;
+  const float x_component = std::sin(wheel_angle);
+  const float y_component = std::cos(wheel_angle);
   const float x_scale = 1.0f / (4.0f * x_component);
   const float y_scale = 1.0f / (4.0f * y_component);
-
   Eigen::Matrix<float, 2, 4> kinematics;
   kinematics << x_scale, -x_scale, -x_scale, x_scale,
-      y_scale, y_scale, y_scale, y_scale;
+                y_scale,  y_scale,  y_scale, y_scale;
 
   auto safeEnc = [](pros::Motor &m, float prev) {
     float v = m.get_position();
@@ -184,7 +189,6 @@ void Chassis::odometryTask() {
   };
 
   while (true) {
-
     float raw_fl = safeEnc(frontLeft, prev_fl);
     float raw_fr = safeEnc(frontRight, prev_fr);
     float raw_bl = safeEnc(backLeft, prev_bl);
@@ -196,28 +200,28 @@ void Chassis::odometryTask() {
                                      : raw_h * DEG2RAD;
 
     Eigen::Vector4f wheel_deltas(
-        (raw_fl - prev_fl) * d_per_deg, (raw_fr - prev_fr) * d_per_deg,
-        (raw_bl - prev_bl) * d_per_deg, (raw_br - prev_br) * d_per_deg);
-
-    float d_theta_meas =
-        std::remainder(current_heading_meas - prev_heading, 2.0f * M_PI);
-    if (std::isnan(d_theta_meas))
-      d_theta_meas = 0.0f;
-
+        (raw_fl - prev_fl) * d_per_deg, 
+        (raw_fr - prev_fr) * d_per_deg,
+        (raw_bl - prev_bl) * d_per_deg, 
+        (raw_br - prev_br) * d_per_deg
+    );
+    float d_theta_meas = std::remainder(current_heading_meas - prev_heading, 2.0f * M_PI);
+    if (std::isnan(d_theta_meas)) {
+        d_theta_meas = 0.0f;
+    }
     Eigen::Vector2f local_delta = kinematics * wheel_deltas;
-
     poseMutex.take();
-
     ekf.predict(local_delta.x(), local_delta.y(), d_theta_meas);
-
     ekf.updateIMU(current_heading_meas);
+    
+    float step_dist = std::hypot(local_delta.x(), local_delta.y());
+    motionDistTraveled += step_dist;
 
     currentPose.x = ekf.getX();
     currentPose.y = ekf.getY();
     currentPose.theta = ekf.getTheta();
 
     poseMutex.give();
-
     prev_fl = raw_fl;
     prev_fr = raw_fr;
     prev_bl = raw_bl;
@@ -227,7 +231,6 @@ void Chassis::odometryTask() {
     pros::Task::delay_until(&now, 10);
   }
 }
-
 XDriveVoltages Chassis::calculateHolonomic(float vx, float vy, float vt) {
 
   constexpr float scale = 12000.0f / 127.0f;
@@ -305,11 +308,11 @@ void Chassis::setThetaGains(std::vector<ScheduledGain> steps) {
 }
 
 void Chassis::driveControl(float forward, float sideways, float rotation,
-                           DriveCurves drivecurves) {
+                           DriveCurves drivecurves, bool fieldCentric, float headingOffset, DriveCorrection correction) {
     
     static bool headingInitialized = false;
     static float targetHeading = 0.0f;
-    static PID headingPID(1.0f, 0.0f, 0.0f, 0.0f); 
+    static PID headingPID(correction.kP, 0.0f, 0.0f, 0.0f); 
     static uint32_t lastRotationTime = 0;
 
     if (!headingInitialized) {
@@ -330,6 +333,25 @@ void Chassis::driveControl(float forward, float sideways, float rotation,
     forward  = applyCurve(forward,  drivecurves.movement);
     sideways = applyCurve(sideways, drivecurves.movement);
 
+    float robotForward = forward;
+    float robotSideways = sideways;
+
+    if (fieldCentric) {
+        float adjustedTheta = getPose(false).theta - headingOffset;
+        float thetaRad = adjustedTheta * DEG2RAD;
+        
+        robotSideways = sideways * std::cos(thetaRad) - forward * std::sin(thetaRad);
+        robotForward  = sideways * std::sin(thetaRad) + forward * std::cos(thetaRad);
+        float maxInput = std::max(std::abs(forward), std::abs(sideways));
+        float maxRotated = std::max(std::abs(robotForward), std::abs(robotSideways));
+        
+        if (maxRotated > 0.0f) {
+            float scale = maxInput / maxRotated;
+            robotSideways *= scale;
+            robotForward  *= scale;
+        }
+    }
+
     if (std::abs(rotation) >= 5.0f) {
         rotation = applyCurve(rotation, drivecurves.rotation);
         targetHeading = getPose(false).theta; 
@@ -339,17 +361,27 @@ void Chassis::driveControl(float forward, float sideways, float rotation,
             rotation = 0.0f;
             targetHeading = getPose(false).theta;
         } else {
+          
+          if(correction.correctionOn) {
             float currentHeading = getPose(false).theta;
             float angleError = getAngleError(targetHeading, currentHeading);
+            
+            headingPID.setGains(thetaSched.getGains(angleError));
+            
             rotation = (float)headingPID.update(angleError);
-            rotation = std::clamp(rotation, -127.0f, 127.0f);
+            rotation = std::clamp(rotation, -30.0f, 30.0f);
+          }
         }
     }
 
-    setMotorVoltages(calculateHolonomic(sideways, forward, rotation));
+    setMotorVoltages(calculateHolonomic(robotSideways, robotForward, rotation));
 }
 
-enum class HeadingMode { FollowPath, HoldAngle };
+enum class HeadingMode { 
+  FollowPath, 
+  HoldAngle, 
+  CustomAngles 
+};
 
 void Chassis::followPathPID(const std::vector<PathPoint> &path,
                             float lookaheadDistance,
@@ -382,7 +414,7 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
             (headingMode == HeadingMode::HoldAngle)
                 ? holdAngleDeg
                 : getPose(false).theta;
-                std::cout << "Locked Heading: " << lockedHeading << std::endl;
+        std::cout << "Locked Heading: " << lockedHeading << std::endl;
 
         while (pros::millis() - start < params.timeout) {
 
@@ -427,17 +459,12 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
             float dist =
                 std::hypot(projX - curr.x,
                            projY - curr.y);
-
             if (dist < bestDist) {
-
               bestDist = dist;
-
               closestPoint.x = projX;
               closestPoint.y = projY;
-
-              closestPoint.theta =
-                  a.theta +
-                  (b.theta - a.theta) * t;
+              float segmentAngleDiff = getAngleError(b.theta, a.theta);
+              closestPoint.theta = a.theta + segmentAngleDiff * t;
 
               closestSegment = i;
               closestT = t;
@@ -445,9 +472,7 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
           }
 
           PathPoint lookahead = closestPoint;
-
           float remaining = lookaheadDistance;
-
           int seg = closestSegment;
 
           while (seg < (int)path.size() - 1) {
@@ -477,10 +502,8 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
 
               lookahead.x = startX + dx * ratio;
               lookahead.y = startY + dy * ratio;
-
-              lookahead.theta =
-                  a.theta +
-                  (b.theta - a.theta) * ratio;
+              float angleDiff = getAngleError(b.theta, a.theta);
+              lookahead.theta = a.theta + angleDiff * ratio;
 
               break;
             }
@@ -552,6 +575,13 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
             targetHeading = lockedHeading;
             break;
 
+          case HeadingMode::CustomAngles:
+            targetHeading = lookahead.theta;
+            if (reversed) {
+              targetHeading += 180.0f;
+            }
+            break;
+
           default:
             targetHeading = curr.theta;
             break;
@@ -592,7 +622,6 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
 
           thetaPID.setGains(
               thetaSched.getGains(angleError));
-        
 
           float forward =
               (float)forwardPID.update(localForward);
@@ -1049,4 +1078,47 @@ void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
         brake();
       },
       params.async);
+}
+
+void Chassis::waitUntilDone()
+{
+  motion.waitUntilDone();
+}
+
+
+
+void Chassis::waitUntil(float dist) {
+  uint32_t targetId = motion.getLastEnqueuedId();
+  while (true) {
+    poseMutex.take();
+    float currentDist = motionDistTraveled;
+    poseMutex.give();
+
+    uint32_t runningId = motion.getCurrentRunningId();
+    bool empty = motion.isQueueEmpty();
+
+    // If the queue is empty and the target motion has not started, it was cancelled.
+    if (empty && runningId < targetId) {
+      break;
+    }
+
+    if (runningId >= targetId) {
+      // If we are currently executing the target motion or a newer one
+      if (runningId > targetId || currentDist >= dist) {
+        break;
+      }
+    }
+
+    pros::delay(10);
+  }
+}
+
+void Chassis::cancelMotion() {
+  motion.cancelMotion();
+  brake();
+}
+
+void Chassis::cancelAllMotions() {
+  motion.cancelAll();
+  brake();
 }

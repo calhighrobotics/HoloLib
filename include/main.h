@@ -10,6 +10,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+void simulation(void);
 void autonomous(void);
 void initialize(void);
 void disabled(void);

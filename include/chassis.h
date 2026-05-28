@@ -120,6 +120,14 @@ struct DriveCurves {
   DriveCurve rotation;
 };
 
+struct DriveCorrection
+{
+  bool correctionOn = true;
+  float kP = 1.0f;
+  float kI = 0.01f;
+  float kD = 0.1f;
+};
+
 struct MoveParams {
   float maxTranslationSpeed = 127.0f;
   float maxRotationSpeed = 127.0f;
@@ -168,6 +176,8 @@ public:
   Chassis(pros::Motor fl, pros::Motor fr, pros::Motor bl, pros::Motor br,
           pros::Imu imu_sensor, ChassisConfig config);
 
+  void calibrate();
+
   void setXGains(std::vector<ScheduledGain> steps);
   void setYGains(std::vector<ScheduledGain> steps);
   void setThetaGains(std::vector<ScheduledGain> steps);
@@ -181,9 +191,9 @@ public:
   void brake();
 
   void driveControl(float forward, float sideways, float rotation,
-                    DriveCurves drivecurves);
+                    DriveCurves drivecurves, bool fieldCentric, float headingOffset = 0.0f, DriveCorrection correction = {});
 
-  enum class HeadingMode { FollowPath, HoldAngle };
+  enum class HeadingMode { FollowPath, HoldAngle, CustomAngles};
   enum class CurveDirection { Auto, CW, CCW };
 
   void followPathPID(const std::vector<PathPoint> &path, float lookahead_inches,
@@ -213,9 +223,21 @@ public:
   void curveCircle(float targetThetaDeg, float radius, MoveParams params = {},
                    CurveDirection direction = CurveDirection::Auto);
 
+  void waitUntilDone();
+
+  void cancelAllMotions();
+
   MotionHandler motion;
 
   void odometryTask();
+
+  void getDistanceTraveled(bool convertToMeters = false);
+
+  void cancelMotion();
+
+  void waitUntil(float distance);
+
+
 
 private:
   pros::Motor frontLeft, frontRight, backLeft, backRight;
@@ -230,8 +252,9 @@ private:
   EncoderKalmanFilter kf_fl, kf_fr, kf_bl, kf_br;
   float prev_fl = 0, prev_fr = 0, prev_bl = 0, prev_br = 0;
   float prev_heading = 0;
-
+  float targetHeadingDriveControl = 0;
   friend void odomTaskTrampoline(void *);
+  float motionDistTraveled = 0.0f;
 };
 
 inline float getAngleError(float target, float current) {
