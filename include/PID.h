@@ -17,10 +17,16 @@ private:
   bool m_signFlipReset;
 
   double m_previousError = 0;
+  double m_previousMeasurement = 0;
   double m_integral = 0;
+  double m_filteredDerivative = 0;
   uint32_t m_previousTime = 0;
   bool m_initialized = false;
   double m_previousOutput = 0; 
+
+  double m_alpha = 0.2;      
+  double m_integralLimit = 0.0;    
+  double m_staticThreshold = 3.0;   
 
   template <typename T> inline int sgn(T val) {
     return (T(0) < val) - (val < T(0));
@@ -36,6 +42,7 @@ public:
   void setGains(PIDGains gains);
 
   double update(double error);
+  double update(double error, double measurement);
   void reset();
 
   void setSignFlipReset(bool signFlipReset);
@@ -43,4 +50,13 @@ public:
 
   void setWindupRange(double windupRange);
   double getWindupRange();
+
+  void setAlpha(double alpha) { m_alpha = alpha; }
+  double getAlpha() { return m_alpha; }
+
+  void setIntegralLimit(double limit) { m_integralLimit = limit; }
+  double getIntegralLimit() { return m_integralLimit; }
+
+  void setStaticThreshold(double threshold) { m_staticThreshold = threshold; }
+  double getStaticThreshold() { return m_staticThreshold; }
 };

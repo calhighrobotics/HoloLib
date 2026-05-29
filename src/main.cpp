@@ -47,7 +47,7 @@ void initialize() {
       {90.0, {2.15, 0.015, 0.155}},
       {0.0, {3.0, 0.02, 0.2}},
   });
-  chassis.setVelocityCalculations(true);
+  chassis.setVelocityCalculations(false);
   pros::Task screen_task([&]() {
     while (true) {
       Pose pose = chassis.getPose(false);
@@ -340,7 +340,7 @@ void simulation()
  //chassis.moveToPoint(-20, 39, {}, true);
   //chassis.turnToPoint(-20, -20, {});
   //chassis.moveToPoint(-20, -20, {}, true);
-  
+
 }
 
 
@@ -411,7 +411,8 @@ void autonomous() {
 0, 39, 0
 	)";
 
-  chassis.curveCircle(180, 12, {}, Chassis::CurveDirection::CW);
+  chassis.moveToPoint(30, 30, {}, true);
+  chassis.moveToPoint(30, 0, {}, false);
 }
 
 void opcontrol() {
@@ -435,6 +436,10 @@ void opcontrol() {
       prev_rotation = rotation;
     }
 
+    if(chassis.detectCollision())
+  {
+    std::cout << "Collision Detected!" << std::endl;
+  }
     chassis.driveControl(
         forward, sideways, rotation,
         {.movement = movement_curve, .rotation = rotation_curve}, true, 90, {.correctionOn = true, .kP = 0.07f, .kI = 0.0f, .kD = 0.0f});

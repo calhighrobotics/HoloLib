@@ -5,7 +5,7 @@ void motionHandlerTask(void *param) {
 }
 
 MotionHandler::MotionHandler()
-    : lastEnqueuedId(0), currentRunningId(0), onMotionStartCallback(nullptr) {
+    : lastEnqueuedId(0), currentRunningId(0), onMotionStartCallback(nullptr), running(false) {
   task = new pros::Task(motionHandlerTask, this, "Motion Handler Task");
 }
 
@@ -40,6 +40,7 @@ void MotionHandler::cancelMotion() {
   }
 
   currentRunningId++;
+  running = false;
 
   task = new pros::Task(motionHandlerTask, this, "Motion Handler Task");
   mutex.give();
@@ -58,6 +59,7 @@ void MotionHandler::cancelAll() {
   }
 
   currentRunningId = lastEnqueuedId;
+  running = false;
 
   task = new pros::Task(motionHandlerTask, this, "Motion Handler Task");
   mutex.give();
@@ -66,10 +68,10 @@ void MotionHandler::cancelAll() {
 void MotionHandler::waitUntilDone() {
   while (true) {
     mutex.take();
-    bool empty = queue.empty();
+    bool done = queue.empty() && !running;
     mutex.give();
 
-    if (empty)
+    if (done)
       break;
     pros::delay(10);
   }
@@ -87,6 +89,7 @@ void MotionHandler::loop() {
 
     if (currentMotion) {
       mutex.take();
+      running = true;
       currentRunningId++;
       if (onMotionStartCallback) {
         onMotionStartCallback();
@@ -96,6 +99,7 @@ void MotionHandler::loop() {
       currentMotion();
 
       mutex.take();
+      running = false;
       if (!queue.empty()) {
         queue.pop();
       }
@@ -104,4 +108,11 @@ void MotionHandler::loop() {
       pros::delay(10);
     }
   }
+}
+
+bool MotionHandler::isInMotion() {
+  mutex.take();
+  bool inMotion = running || !queue.empty();
+  mutex.give();
+  return inMotion;
 }

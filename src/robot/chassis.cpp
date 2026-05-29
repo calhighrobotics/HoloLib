@@ -1197,36 +1197,57 @@ void Chassis::setEKFGains(float xProcessNoise, float yProcessNoise, float thetaP
   ekf.setProcessNoise(xProcessNoise, yProcessNoise, thetaProcessNoise, measurementNoise);
 }
 
-//Untested
+
 void Chassis::setVelocityCalculations(bool state)
 {
   velocityCalculationsOn = state;
 }
 
-//Untested
-bool Chassis::detectCollision() {
-    const double TARGET_THRESHOLD = 50.0;     
-    const double VELOCITY_THRESHOLD = 5.0;    
-    const double EFFICIENCY_THRESHOLD = 20.0; 
 
-    auto is_colliding = [&](pros::Motor& motor) {
+bool Chassis::detectCollision() {
+    const double TARGET_VEL_THRESHOLD = 30.0;   
+    const uint32_t DEBOUNCE_TIME_MS = 250;      
+
+    static uint32_t last_check_time = pros::millis();
+    static uint32_t stall_accumulator_ms = 0;
+
+    uint32_t now = pros::millis();
+    uint32_t dt = now - last_check_time;
+    last_check_time = now;
+    auto is_wheel_slipping = [&](pros::Motor& motor) {
         double target = std::abs(motor.get_target_velocity());
         double actual = std::abs(motor.get_actual_velocity());
-        double eff = motor.get_efficiency();
+        int32_t current = motor.get_current_draw();
+        double temp = motor.get_temperature();     
+        if (target < TARGET_VEL_THRESHOLD) {
+            return false;
+        }
+        int32_t dynamic_current_threshold = 1200; 
+        if (temp > 50.0) {
+            dynamic_current_threshold = 900;    
+        }
+        bool speed_deficit = actual < (target * 0.70);
+        bool heavy_load = current > dynamic_current_threshold;
 
-        bool commanded = target > TARGET_THRESHOLD;
-        bool struggling = (actual < VELOCITY_THRESHOLD) || (eff < EFFICIENCY_THRESHOLD);
-
-        return commanded && struggling;
+        return speed_deficit && heavy_load;
     };
+    int slip_count = 0;
+    if (is_wheel_slipping(frontLeft)) slip_count++;
+    if (is_wheel_slipping(frontRight)) slip_count++;
+    if (is_wheel_slipping(backLeft)) slip_count++;
+    if (is_wheel_slipping(backRight)) slip_count++;
+    bool physically_blocked = (slip_count >= 2);
 
-    return is_colliding(frontLeft) || 
-           is_colliding(frontRight) || 
-           is_colliding(backLeft) || 
-           is_colliding(backRight);
+    if (physically_blocked) {
+        stall_accumulator_ms += dt;
+    } else {
+        stall_accumulator_ms = 0; 
+    }
+
+    return stall_accumulator_ms >= DEBOUNCE_TIME_MS;
 }
 
-//Untested
+
 void Chassis::openLoop(float forward, float sideways, float rotation) {
   setMotorVoltages(calculateHolonomic(forward, sideways, rotation));
 }

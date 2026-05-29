@@ -17,6 +17,8 @@ public:
 
   void cancelMotion();
 
+  bool isInMotion();
+
   uint32_t getLastEnqueuedId() const { return lastEnqueuedId; }
   uint32_t getCurrentRunningId() const { return currentRunningId; }
   
@@ -38,6 +40,7 @@ private:
   uint32_t lastEnqueuedId = 0;
   uint32_t currentRunningId = 0;
   std::function<void()> onMotionStartCallback = nullptr;
+  bool running = false;
 
   void loop();
   friend void motionHandlerTask(void *param);
