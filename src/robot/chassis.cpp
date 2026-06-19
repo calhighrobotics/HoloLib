@@ -10,6 +10,7 @@
 static constexpr float METER_TO_INCH = 39.3700787f;
 static constexpr float DEG2RAD = M_PI / 180.0f;
 static constexpr float RAD2DEG = 180.0f / M_PI;
+MoveParams Chassis::defaultParams = {};
 
 
 void ObstacleManager::setRobotDimensions(float width, float length) {
@@ -225,6 +226,10 @@ void Chassis::calibrate()
     prevTrackingPositions[i] = 0.0f;
   }
   imu.reset(true);
+  while(imu.is_calibrating())
+  {
+    pros::delay(10);
+  }
   pros::c::controller_rumble(pros::E_CONTROLLER_MASTER, ".");
   std::cout << "Chassis Calibrated" << std::endl;
 }
@@ -777,18 +782,14 @@ void Chassis::driveControl(float forward, float sideways, float rotation,
     );
 }
 
-enum class HeadingMode { 
-  FollowPath, 
-  HoldAngle, 
-  CustomAngles 
-};
 
-void Chassis::followPathPID(const std::vector<PathPoint> &path,
-                            float lookaheadDistance,
-                            MoveParams params,
-                            HeadingMode headingMode,
-                            float holdAngleDeg,
-                            bool reversed) {
+
+void Chassis::followPath(const std::vector<PathPoint> &path,
+                         float lookaheadDistance,
+                         MoveParams params,
+                         HeadingMode headingMode,
+                         float holdAngleDeg,
+                         bool reversed) {
 
   if (path.size() < 2) {
     std::cout << "[followPathPID] Invalid path." << std::endl;
@@ -818,12 +819,9 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
                               ? holdAngleDeg
                               : getPose(false).theta;
 
-    
     float pathProgress = 0.0f;
     Pose  prevPose     = getPose(false);
-    uint32_t lastProgressTime = pros::millis();
-    float    lastProgress     = 0.0f;
-    constexpr uint32_t stallTimeout = 1000;
+
     auto samplePath = [&](float s) -> PathPoint {
       s = std::clamp(s, 0.0f, totalPathLen);
       int lo = 0, hi = N - 2;
@@ -968,16 +966,6 @@ void Chassis::followPathPID(const std::vector<PathPoint> &path,
       } else {
         if (distToEnd > params.exitRange * 1.5f || std::abs(angleError) > 4.0f)
           settleStart = 0;
-      }
-
-      if (pathProgress > lastProgress + 0.5f) {
-        lastProgress     = pathProgress;
-        lastProgressTime = pros::millis();
-      }
-      if (pros::millis() - lastProgressTime > stallTimeout &&
-          distToEnd > params.exitRange) {
-        std::cout << "[followPathPID] Stall detected, aborting." << std::endl;
-        break;
       }
 
       forwardPID.setGains(ySched.getGains(localForward));
@@ -1360,72 +1348,29 @@ void Chassis::moveToPose(float tx, float ty, float targetThetaDeg,
       },
       params.async);
 }
-void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
-                          CurveDirection direction) {
-  if (std::abs(radius) < 1e-3f) {
-    turnToHeading(targetThetaDeg, params);
-    return;
-  }
 
+
+enum class SwingSide {
+  Left,
+  Right
+};
+
+void Chassis::swingTurn(float targetThetaDeg, SwingSide lockedSide, MoveParams params) {
   motion.enqueue(
       [=, this]() {
         uint32_t start = pros::millis();
         uint32_t settleStart = 0;
         constexpr uint32_t settleTime = 120;
         constexpr float angleExitDeg = 2.0f;
-
-        PID xPID(0, 0, 0, 0);
-        PID yPID(0, 0, 0, 0);
         PID tPID(0, 0, 0, 0);
-
-        Pose sp = getPose(false);
-        
-        auto directedAngleError = [](float target, float current,
-                                     CurveDirection dir) {
-          float shortest = getAngleError(target, current); 
-          if (dir == CurveDirection::Auto)
-            return shortest;
-
-          if (dir == CurveDirection::CW) {
-            if (shortest <= -90.0f) {
-              return shortest + 360.0f;
-            }
-            return shortest;
-          } else {
-            if (shortest >= 90.0f) {
-              return shortest - 360.0f;
-            }
-            return shortest;
-          }
-        };
-
-        float initErr = directedAngleError(targetThetaDeg, sp.theta, direction);
-        float dir = (initErr >= 0) ? 1.0f : -1.0f;
-        float arcRadius = std::abs(radius);
-        float maxCurveTranslation =
-            std::min(params.maxTranslationSpeed, 60.0f);
-        float maxCurveRotation = std::min(params.maxRotationSpeed, 70.0f);
-
-        float startRad = sp.theta * DEG2RAD;
-        float centerX = sp.x + dir * arcRadius * std::cos(startRad);
-        float centerY = sp.y - dir * arcRadius * std::sin(startRad);
-        float targetRad = targetThetaDeg * DEG2RAD;
-        float finalX = centerX - dir * arcRadius * std::cos(targetRad);
-        float finalY = centerY + dir * arcRadius * std::sin(targetRad);
+        float maxRotation = std::min(params.maxRotationSpeed, 127.0f); 
 
         while (pros::millis() - start < params.timeout) {
           Pose curr = getPose(false);
-          float angleError =
-              directedAngleError(targetThetaDeg, curr.theta, direction);
-          float finalDistErr = std::hypot(finalX - curr.x, finalY - curr.y);
+          float angleError = getAngleError(targetThetaDeg, curr.theta);
 
-          if (params.earlyExitRange > 0.0f &&
-              finalDistErr <= params.earlyExitRange)
-            return;
-
-          bool posSettled = finalDistErr < params.exitRange;
           bool angleSettled = std::abs(angleError) < angleExitDeg;
-          if (posSettled && angleSettled) {
+          if (angleSettled) {
             if (settleStart == 0)
               settleStart = pros::millis();
             if (pros::millis() - settleStart >= settleTime)
@@ -1434,39 +1379,20 @@ void Chassis::curveCircle(float targetThetaDeg, float radius, MoveParams params,
             settleStart = 0;
           }
 
-          float toCenterX = centerX - curr.x;
-          float toCenterY = centerY - curr.y;
-          float distToCenter = std::hypot(toCenterX, toCenterY);
-          float radiusError = distToCenter - arcRadius;
-
-          float rad = curr.theta * DEG2RAD;
-          float cosH = std::cos(rad), sinH = std::sin(rad);
-          float centerLocalX = toCenterX * cosH - toCenterY * sinH;
-          float centerSide = centerLocalX >= 0.0f ? 1.0f : -1.0f;
-
-          float arcRemaining = std::abs(angleError) * DEG2RAD * arcRadius;
-
-          xPID.setGains(xSched.getGains(radiusError));
-          yPID.setGains(ySched.getGains(arcRemaining));
           tPID.setGains(thetaSched.getGains(angleError));
-
-          float outX_local = (float)xPID.update(radiusError * centerSide);
-          float outY_local = (float)yPID.update(arcRemaining);
           float outT = (float)tPID.update(angleError);
-
-          float mag = std::hypot(outX_local, outY_local);
-          if (!posSettled && mag > 1e-3f && mag < params.minSpeed) {
-            float s = params.minSpeed / mag;
-            outX_local *= s;
-            outY_local *= s;
+          if (!angleSettled && std::abs(outT) < params.minSpeed) {
+            outT = std::copysign(params.minSpeed, outT);
           }
-          if (mag > maxCurveTranslation) {
-            float s = maxCurveTranslation / mag;
-            outX_local *= s;
-            outY_local *= s;
-          }
-          outT = std::clamp(outT, -maxCurveRotation, maxCurveRotation);
+          outT = std::clamp(outT, -maxRotation, maxRotation);
 
+          float outX_local = 0.0f;
+          float outY_local = 0.0f;
+          if (lockedSide == SwingSide::Left) {
+            outY_local = -outT;
+          } else {
+            outY_local = outT;
+          }
           setMotorVoltages(calculateHolonomic(outX_local, outY_local, outT));
           pros::delay(10);
         }
@@ -1628,42 +1554,136 @@ void Chassis::clearTrackingWheels() {
   std::cout << "[Chassis] Tracking wheels cleared, reverted to motor encoder odometry" << std::endl;
 }
 
-void Chassis::tuneMode(bool state) {
-  if (state) {
-    savedXSched = xSched;
-    savedYSched = ySched;
-    savedThetaSched = thetaSched;
-    
 
-    setXGains({{0.0f, {5.0f, 0.0f, 0.5f}}});
-    setYGains({{0.0f, {5.0f, 0.0f, 0.5f}}});
-    setThetaGains({{0.0f, {1.5f, 0.0f, 0.1f}}});
-    
-    tuneModeEnabled = true;
-    std::cout << "[Chassis] Tune Mode ENABLED. Gain schedulers saved, conservative defaults applied.\n";
-  } else {
-    xSched = savedXSched;
-    ySched = savedYSched;
-    thetaSched = savedThetaSched;
-    tuneModeEnabled = false;
-    std::cout << "[Chassis] Tune Mode DISABLED. Original gain schedulers restored.\n";
+#include <map>
+
+// You can place this struct just above the function in your .cpp file
+struct ButtonRecord {
+  pros::controller_digital_e_t button;
+  uint32_t duration_ms;
+  uint32_t timestamp_ms;
+};
+
+void Chassis::getControllerInput(pros::Controller master) {
+  // 1. Define the buttons you want to track locally
+
+  // 2. Use 'static' so these variables remember their state between loops
+  static std::map<pros::controller_digital_e_t, uint32_t> pressStartTimes;
+  static std::map<pros::controller_digital_e_t, bool> prevStates;
+  static std::vector<ButtonRecord> buttonHistory;
+
+  uint32_t currentTime = pros::millis();
+
+  for (auto &btn : controllerButtons) {
+    pros::controller_digital_e_t btn_enum = btn.button;
+    bool isPressed = master.get_digital(btn_enum);
+    bool wasPressed = prevStates[btn_enum];
+
+    if (isPressed && !wasPressed) {
+      // --- RISING EDGE: Button was just pressed down ---
+      pressStartTimes[btn_enum] = currentTime;
+      if (btn.callback) {
+        btn.callback();
+      }
+    } 
+    else if (!isPressed && wasPressed) {
+      // --- FALLING EDGE: Button was just released ---
+      uint32_t duration = currentTime - pressStartTimes[btn_enum];
+      
+      // Log the record into the static history vector
+      buttonHistory.push_back({btn_enum, duration, pressStartTimes[btn_enum]});
+
+      // Optional: Print to terminal to verify it's working
+      std::cout << "Button " << btn_enum << " held for " << duration << "ms\n";
+    }
+
+    // Update the previous state for the next loop iteration
+    prevStates[btn_enum] = isPressed;
   }
 }
 
-void Chassis::autoTunePID(TuneTarget target, float dist, int maxCycles) {
-  if (!tuneModeEnabled) {
-    std::cout << "[ERROR] Cannot run autoTunePID unless tuneMode is enabled!\n";
+void Chassis::logReplayData(pros::Controller master, int timeout_ms)
+{
+  pros::Task log_task([=, this]() {
+    Pose lastPose = getPose();
+    
+    // Clamp the delay to a minimum of 20ms to prevent RTOS starvation 
+    // and serial flooding.
+    int safe_timeout = (timeout_ms < 20) ? 20 : timeout_ms;
+    
+    while(true) {
+      Pose pose = getPose(); 
+      
+      double deltaX = std::abs(pose.x - lastPose.x);
+      double deltaY = std::abs(pose.y - lastPose.y);
+      double deltaTheta = std::abs(pose.theta - lastPose.theta);
+      
+      if(deltaX > 0.5 || deltaY > 0.5 || deltaTheta > 1.0)
+      {
+        // Use printf and \n. This avoids the expensive buffer flush of std::endl
+        // Limits the output to 2 decimal places to save serial bandwidth.
+        printf("%.2f,%.2f,%.2f\n", pose.x, pose.y, pose.theta);
+        
+        lastPose = pose; 
+      }
+      
+      //getControllerInput(master);
+      
+      pros::delay(safe_timeout);
+    }
+  });
+}
+
+void Chassis::runDriverReplay(std::vector<PathPoint> data, float lookahead) {
+  if (data.empty()) {
+    std::cout << "[runDriverReplay] Empty data provided." << std::endl;
     return;
   }
-  TuneConfig config;
-  config.dist = dist;
-  config.maxCycles = maxCycles;
-  config.maxSpeed = 127.0f;
-  config.timeout = 8000;
-  
-  AutoTuner::run(this, target, config);
-}
 
-void Chassis::setMoveParams(MoveParams params) {
-  this->defaultParams = params;
+  std::vector<std::vector<PathPoint>> segments;
+  std::vector<PathPoint> current_segment;
+
+  current_segment.push_back(data[0]);
+
+  float prev_dx = 0, prev_dy = 0;
+  float prev_dist = 0;
+  bool has_prev_vector = false;
+
+  for (size_t i = 1; i < data.size(); ++i) {
+    float dx = data[i].x - current_segment.back().x;
+    float dy = data[i].y - current_segment.back().y;
+    float dist = std::hypot(dx, dy);
+
+    if (dist > 0.5f) {
+      if (has_prev_vector) {
+        float dot = (dx * prev_dx) + (dy * prev_dy);
+        if (dot < (-0.5f * dist * prev_dist)) {
+          segments.push_back(current_segment);
+          PathPoint bridge_point = current_segment.back(); 
+          current_segment.clear();
+          current_segment.push_back(bridge_point); 
+        }
+      }
+      current_segment.push_back(data[i]);
+      prev_dx = dx;
+      prev_dy = dy;
+      prev_dist = dist;
+      has_prev_vector = true;
+    } else {
+      current_segment.back().theta = data[i].theta;
+    }
+  }
+
+  if (current_segment.size() >= 2) {
+    segments.push_back(current_segment);
+  }
+  bool is_reversed = false; 
+
+  for (const auto& seg : segments) {
+    if (seg.size() >= 2) {
+      followPath(seg, lookahead, defaultParams, HeadingMode::CustomAngles, 0.0f, is_reversed);
+      waitUntilDone();
+      is_reversed = !is_reversed; 
+    }
+  }
 }

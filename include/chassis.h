@@ -5,8 +5,8 @@
 #include "Eigen/Geometry"
 #include "PID.h"
 #include "api.h"
-#include "auto_tuner.h"
 #include "motion_handler.h"
+#include "pros/adi.hpp"
 #include "pros/rotation.hpp"
 #include <algorithm>
 #include <cmath>
@@ -142,17 +142,7 @@ public:
     x = x + K * y;
     x(2) = std::remainder(x(2), 2.0f * M_PI);
     P = (Eigen::Matrix3f::Identity() - K * H) * P;
-  }
-
-  
-
-
-
-
-
-
-
- 
+  } 
   void updateTrackingWheels(const std::vector<TrackingWheelConfig> &configs,
                             const Eigen::VectorXf &measured_deltas,
                             float dx_local, float dy_local, float dtheta,
@@ -160,11 +150,6 @@ public:
     const int n = static_cast<int>(configs.size());
     if (n == 0 || measured_deltas.size() != n)
       return;
-
-
-
-
-
     float theta = x(2);
     float cos_t = std::cos(theta);
     float sin_t = std::sin(theta);
@@ -177,14 +162,6 @@ public:
       float oy = configs[i].yOffset;
 
       if (configs[i].orientation == TrackingWheelOrientation::VERTICAL) {
-
-
-
-
-
-
-
-
         z_pred(i) = dy_local - ox * dtheta;
         H_tw(i, 0) = -sin_t;
         H_tw(i, 1) = cos_t;
@@ -199,19 +176,10 @@ public:
       }
     }
 
-
     Eigen::VectorXf y_innov = measured_deltas - z_pred;
-
-
     Eigen::MatrixXf R_tw = Eigen::MatrixXf::Identity(n, n) * wheel_noise;
-
-
     Eigen::MatrixXf S = H_tw * P * H_tw.transpose() + R_tw;
-
-
     Eigen::MatrixXf K = P * H_tw.transpose() * S.inverse();
-
-
     x += K * y_innov;
     x(2) = std::remainder(x(2), 2.0f * static_cast<float>(M_PI));
 
@@ -300,8 +268,38 @@ struct ScheduledGain {
   PIDGains gains;
 };
 
+struct ReplayData
+{
+  float forwards, sideways, rotation;
+  Pose pose;
+};
+
+struct ControllerButton {
+  pros::controller_digital_e_t button;
+  std::function<void()> callback;
+};
+
+inline std::vector<ControllerButton> controllerButtons
+{
+  {pros::E_CONTROLLER_DIGITAL_UP, [](){}},  
+  {pros::E_CONTROLLER_DIGITAL_DOWN, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_LEFT, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_RIGHT, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_A, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_B, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_X, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_Y, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_L1, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_L2, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_R1, [](){}},
+  {pros::E_CONTROLLER_DIGITAL_R2, [](){}},
+  
+};
+
+
 std::vector<PathPoint> parsePathData(const std::string &input_source,
                                      bool convertFromMeters = false);
+                        
 
 class GainScheduler {
 public:
@@ -329,6 +327,8 @@ private:
   float R;
 };
 
+enum class HeadingMode { FollowPath, HoldAngle, CustomAngles };
+
 class Chassis {
 public:
   Chassis(pros::Motor fl, pros::Motor fr, pros::Motor bl, pros::Motor br,
@@ -355,14 +355,10 @@ public:
                     float headingOffset = 0.0f,
                     DriveCorrection correction = {});
 
-  void tuneMode(bool state);
-  void autoTunePID(TuneTarget target, float dist, int maxCycles = 20);
-
-  enum class HeadingMode { FollowPath, HoldAngle, CustomAngles };
   enum class CurveDirection { Auto, CW, CCW };
   enum class AvoidanceMode { Off, On };
 
-  void followPathPID(const std::vector<PathPoint> &path, float lookahead_inches,
+  void followPath(const std::vector<PathPoint> &path, float lookahead_inches,
                      MoveParams params = defaultParams,
                      HeadingMode headingMode = HeadingMode::FollowPath,
                      float holdAngleDeg = 0.0f, bool reversed = false);
@@ -434,6 +430,15 @@ public:
 
   void setMoveParams(MoveParams params);
 
+  enum class SwingSide {Right, Left};
+  void swingTurn(float targetThetaDeg, SwingSide lockedSide, MoveParams params = defaultParams);
+  
+  void getControllerInput(pros::Controller master);
+  void logReplayData(pros::Controller master, int timeout_ms = 50);
+  void disableReplayDataLogging();
+
+  void runDriverReplay(std::vector<PathPoint> data, float lookahead);
+
 private:
   pros::Motor frontLeft, frontRight, backLeft, backRight;
   std::vector<pros::Motor> motors{frontLeft, frontRight, backLeft, backRight};
@@ -463,7 +468,6 @@ private:
   float pf_kr = 50.0f;
   float pf_influence_radius = 15.0f;
 
-  bool tuneModeEnabled = false;
   GainScheduler savedXSched, savedYSched, savedThetaSched;
 
   uint32_t last_collision_check_time = 0;
