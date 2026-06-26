@@ -53,8 +53,8 @@ void initialize() {
 }
 ```
 
-> **Heads up:** `calibrate()` takes a couple of seconds and the robot has to sit
-> still while the IMU settles. Call it in `initialize()`, not right before a move.
+`calibrate()` takes a couple of seconds and the robot has to sit still while the
+IMU settles. Call it in `initialize()`, not right before a move.
 
 ### How the axes are laid out
 
@@ -356,10 +356,10 @@ letting you floor it. There's also an optional `DriveCorrection` that holds your
 heading when you let go of the turn stick, so the robot doesn't slowly rotate off
 course while you're just translating.
 
-> **Heads up:** field-centric relies on the IMU heading. If you skipped
-> `calibrate()` or the IMU drifts, "forward" will drift with it. Pass a
-> `headingOffset` if you want to redefine which way "forward" points (for
-> example, to match your driver's view from across the field).
+Field-centric relies on the IMU heading. If you skipped `calibrate()` or the IMU
+drifts, "forward" will drift with it. Pass a `headingOffset` if you want to
+redefine which way "forward" points (for example, to match your driver's view
+from across the field).
 
 If you ever need raw, unfiltered control with no PID in the way, `openLoop`
 sends power straight to the wheels.
@@ -412,9 +412,9 @@ The handler also exposes `isInMotion()`, `isQueueEmpty()`, and a
 `setOnMotionStart()` callback if you want to react to moves starting, useful for
 logging or kicking off a mechanism automatically.
 
-> **Heads up:** because moves queue, calling five moves in a row doesn't run them
-> all at once, it lines them up. If you want a move to *replace* what's running
-> instead of waiting behind it, cancel first.
+Because moves queue, calling five moves in a row doesn't run them all at once,
+it lines them up. If you want a move to *replace* what's running instead of
+waiting behind it, cancel first.
 
 ---
 
@@ -480,11 +480,10 @@ chassis.setEKFGains(0.001f,  0.001f,   0.003f,       0.0001f);
 - Lower **measurement noise** to trust the IMU more (good IMU, clean readings);
   raise it if the heading looks jumpy.
 
-> **Heads up:** the EKF is the hardest part of the library to tune, and a badly
-> tuned filter is *worse* than no filter, it'll confidently report the wrong
-> position. If you're not comfortable with noise values yet, run with
-> `setEKFstate(false)` and come back to it. Get your movements working on plain
-> odometry first.
+The EKF is the hardest part of the library to tune, and a badly tuned filter is
+*worse* than no filter — it'll confidently report the wrong position. If you're
+not comfortable with noise values yet, run with `setEKFstate(false)` and come
+back to it. Get your movements working on plain odometry first.
 
 ---
 
@@ -589,12 +588,12 @@ void autonomous() {
 You can also keep paths in a file and load them with `parsePathData(...)` instead
 of pasting them inline.
 
-> **Heads up:** replay records the robot's *path*, not your button presses. It
-> won't fire your intake, lift, or anything else, that's on purpose, to keep the
-> log small. Drive the path with replay, and script your mechanisms separately
-> around it (the [motion handler](#the-motion-handler)'s `waitUntil` is handy for
-> timing those). Also make sure `setPose` matches where you started the
-> recording, or the whole run plays back shifted.
+Replay records the robot's *path*, not your button presses. It won't fire your
+intake, lift, or anything else — that's on purpose, to keep the log small. Drive
+the path with replay, and script your mechanisms separately around it (the
+[motion handler](#the-motion-handler)'s `waitUntil` is handy for timing those).
+Also make sure `setPose` matches where you started the recording, or the whole
+run plays back shifted.
 
 ---
 
@@ -650,12 +649,12 @@ If your robot isn't roughly square, give the avoidance math your real footprint
 with `setRobotDimensionsAvoidance(width, height)` so the clearances account for
 your actual size.
 
-> **Heads up:** potential fields are reactive, they're built to keep you from
-> crashing into something you didn't fully plan for. For a tight, repeatable
-> autonomous routine you'll usually get cleaner results designing a path that
-> already goes around the obstacle. Treat avoidance as a safety layer, not a
-> substitute for a good path, and budget time to tune `kr` and the influence
-> radius before you trust it in a match.
+Potential fields are reactive — they're built to keep you from crashing into
+something you didn't fully plan for. For a tight, repeatable autonomous routine
+you'll usually get cleaner results designing a path that already goes around the
+obstacle. Treat avoidance as a safety layer, not a substitute for a good path,
+and budget time to tune `kr` and the influence radius before you trust it in a
+match.
 
 There's also `detectCollision()`, which flags a sudden impact from an
 acceleration spike, handy as a trigger if you want to react to actually bumping
