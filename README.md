@@ -2,6 +2,8 @@
 
 **A control library for holonomic (X-Drive) VEX V5 robots.**
 
+Website with documentation and useful information can be found here: https://calhighrobotics.github.io/HoloLib/
+
 HoloLib runs on top of [PROS](https://pros.cs.purdue.edu/) and uses the
 [Eigen](https://eigen.tuxfamily.org/) linear-algebra library for the math.
 It handles the hard parts of driving an X-Drive well: knowing where the robot
