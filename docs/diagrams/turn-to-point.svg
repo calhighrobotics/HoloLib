@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 300" width="680" height="300" role="img" aria-label="turnToPoint rotates the robot in place until its front faces a chosen coordinate">
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .lbl { font-size: 13px; fill: #20203c; font-weight: 600; }
+    .sub { font-size: 12px; fill: #5a5a6e; }
+    .note{ font-size: 12px; fill: #4640c4; font-weight: 600; }
+  </style>
+  <defs>
+    <marker id="tp_rot" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#5b54e6"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="678" height="298" rx="16" fill="#ffffff" stroke="#e7e6fb" stroke-width="2"/>
+  <rect x="40" y="36" width="600" height="228" rx="10" fill="#f7f7fb" stroke="#dcdcec" stroke-width="1.6"/>
+
+  <!-- sight line to target -->
+  <line x1="230" y1="150" x2="540" y2="92" stroke="#8b86f0" stroke-width="1.6" stroke-dasharray="6 5"/>
+
+  <!-- target point -->
+  <circle cx="540" cy="92" r="7" fill="#1f9d63"/>
+  <text class="lbl" x="540" y="74" text-anchor="middle">target point (x, y)</text>
+
+  <!-- ghost: starting heading (up) -->
+  <g transform="translate(230,150)" opacity="0.45">
+    <rect x="-24" y="-24" width="48" height="48" rx="9" fill="#f1f0fd" stroke="#9a96e8" stroke-width="2"/>
+    <polygon points="0,-34 -6,-24 6,-24" fill="#9a96e8"/>
+  </g>
+
+  <!-- rotated robot facing the point -->
+  <g transform="translate(230,150) rotate(101)">
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(-21,-21) rotate(-45)"/>
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(21,-21) rotate(45)"/>
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(-21,21) rotate(45)"/>
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(21,21) rotate(-45)"/>
+    <rect x="-24" y="-24" width="48" height="48" rx="9" fill="#ecebfd" stroke="#5b54e6" stroke-width="2"/>
+    <polygon points="0,-34 -6,-24 6,-24" fill="#4640c4"/>
+  </g>
+
+  <!-- rotation arc -->
+  <path d="M230,108 A 42 42 0 0 1 268,128" fill="none" stroke="#5b54e6" stroke-width="2.6" marker-end="url(#tp_rot)"/>
+  <text class="note" x="230" y="230" text-anchor="middle">rotates in place, no translation</text>
+  <text class="sub" x="230" y="250" text-anchor="middle">front ends up pointed at the target</text>
+</svg>

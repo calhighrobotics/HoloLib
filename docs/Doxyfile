@@ -54,25 +54,24 @@ WARN_AS_ERROR          = NO
 # Only the public HoloLib headers are documented; the .cpp implementations
 # repeat the same @param blocks, so including them would only add duplicate
 # documentation warnings without adding API surface.
+#
+# `include` is scanned recursively so any new first-party header is picked up
+# automatically. The bundled third-party trees (Eigen, LVGL, PROS) and the
+# PROS umbrella header (api.h) are excluded below so the file list stays a
+# clean view of HoloLib's own API.
 INPUT                  = ../README.md \
-                         ../include/main.h \
-                         ../include/chassis.h \
-                         ../include/hololib/pose.h \
-                         ../include/hololib/path.h \
-                         ../include/hololib/config.h \
-                         ../include/hololib/tracking_wheel.h \
-                         ../include/hololib/pose_ekf.h \
-                         ../include/hololib/encoder_filter.h \
-                         ../include/hololib/gain_scheduler.h \
-                         ../include/hololib/obstacle.h \
-                         ../include/hololib/replay.h \
-                         ../include/motion_handler.h \
-                         ../include/PID.h \
-                         ../include/distanceReset.h \
-                         ../include/Subsystems/modular_lift.h
+                         usage_guide.md \
+                         ../include
 USE_MDFILE_AS_MAINPAGE = ../README.md
-RECURSIVE              = NO
+RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.hpp *.md
+EXCLUDE                = ../include/Eigen \
+                         ../include/liblvgl \
+                         ../include/pros \
+                         ../include/api.h
+EXCLUDE_PATTERNS       = */Eigen/* \
+                         */liblvgl/* \
+                         */pros/*
 # `..` lets README image links written as `docs/diagrams/*.svg` (which also work
 # on GitHub) resolve from the repo root; `diagrams` covers basename lookups.
 IMAGE_PATH             = . .. diagrams

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 320" width="680" height="320" role="img" aria-label="Path following: the robot aims at a lookahead point a fixed distance ahead on the path instead of the next point">
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .lbl { font-size: 13px; fill: #20203c; font-weight: 600; }
+    .sub { font-size: 12px; fill: #5a5a6e; }
+    .note{ font-size: 12px; fill: #4640c4; font-weight: 600; }
+  </style>
+  <defs>
+    <marker id="pf_mv" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#5b54e6"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="678" height="318" rx="16" fill="#ffffff" stroke="#e7e6fb" stroke-width="2"/>
+  <rect x="40" y="40" width="600" height="240" rx="10" fill="#f7f7fb" stroke="#dcdcec" stroke-width="1.6"/>
+
+  <!-- the path -->
+  <path d="M90,210 C200,210 250,90 360,90 C470,90 500,200 600,200" fill="none" stroke="#c7c4f4" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- path waypoints -->
+  <g fill="#8b86f0">
+    <circle cx="90"  cy="210" r="4"/>
+    <circle cx="230" cy="120" r="4"/>
+    <circle cx="360" cy="90"  r="4"/>
+    <circle cx="490" cy="120" r="4"/>
+    <circle cx="600" cy="200" r="4"/>
+  </g>
+
+  <!-- robot on path -->
+  <g transform="translate(230,120) rotate(40)">
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(-20,-20) rotate(-45)"/>
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(20,-20) rotate(45)"/>
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(-20,20) rotate(45)"/>
+    <rect x="-9" y="-4" width="18" height="8" rx="3" fill="#4640c4" transform="translate(20,20) rotate(-45)"/>
+    <rect x="-22" y="-22" width="44" height="44" rx="9" fill="#ecebfd" stroke="#5b54e6" stroke-width="2"/>
+    <polygon points="0,-32 -6,-22 6,-22" fill="#4640c4"/>
+  </g>
+  <text class="lbl" x="230" y="168" text-anchor="middle">robot</text>
+
+  <!-- lookahead point -->
+  <circle cx="420" cy="96" r="7" fill="#1f9d63"/>
+  <text class="lbl" x="420" y="78" text-anchor="middle">lookahead point</text>
+
+  <!-- aim arrow -->
+  <line x1="250" y1="112" x2="404" y2="98" stroke="#5b54e6" stroke-width="3" marker-end="url(#pf_mv)"/>
+  <text class="note" x="330" y="128" text-anchor="middle">drives toward the point a set distance ahead</text>
+
+  <text class="sub" x="90"  y="300" text-anchor="start">start</text>
+  <text class="sub" x="600" y="300" text-anchor="end">end</text>
+</svg>

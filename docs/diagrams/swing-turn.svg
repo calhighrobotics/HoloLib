@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 300" width="680" height="300" role="img" aria-label="Swing turn: one side of the drive is held still while the other side drives, pivoting the robot around the locked side">
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .lbl { font-size: 13px; fill: #20203c; font-weight: 600; }
+    .sub { font-size: 12px; fill: #5a5a6e; }
+    .note{ font-size: 12px; fill: #4640c4; font-weight: 600; }
+    .lock{ font-size: 12px; fill: #b23b3b; font-weight: 700; }
+  </style>
+  <defs>
+    <marker id="sw_rot" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#5b54e6"/>
+    </marker>
+  </defs>
+
+  <rect x="1" y="1" width="678" height="298" rx="16" fill="#ffffff" stroke="#e7e6fb" stroke-width="2"/>
+  <rect x="40" y="36" width="600" height="228" rx="10" fill="#f7f7fb" stroke="#dcdcec" stroke-width="1.6"/>
+
+  <!-- pivot point (locked side) -->
+  <circle cx="250" cy="170" r="6" fill="#b23b3b"/>
+  <text class="lock" x="250" y="206" text-anchor="middle">locked side (pivot)</text>
+
+  <!-- sweep arc of the driven side -->
+  <path d="M330,170 A 80 80 0 0 0 305,112" fill="none" stroke="#5b54e6" stroke-width="2.6" stroke-dasharray="4 5" marker-end="url(#sw_rot)"/>
+
+  <!-- ghost start -->
+  <g transform="translate(290,170)" opacity="0.4">
+    <rect x="-40" y="-18" width="80" height="36" rx="8" fill="#f1f0fd" stroke="#9a96e8" stroke-width="2"/>
+  </g>
+
+  <!-- robot pivoted around left side -->
+  <g transform="translate(250,170) rotate(-38)">
+    <g transform="translate(40,0)">
+      <rect x="-40" y="-18" width="80" height="36" rx="8" fill="#ecebfd" stroke="#5b54e6" stroke-width="2"/>
+      <circle cx="-32" cy="-12" r="4.5" fill="#b23b3b"/>
+      <circle cx="-32" cy="12" r="4.5" fill="#b23b3b"/>
+      <circle cx="32" cy="-12" r="4.5" fill="#4640c4"/>
+      <circle cx="32" cy="12" r="4.5" fill="#4640c4"/>
+      <polygon points="48,0 36,-7 36,7" fill="#4640c4"/>
+    </g>
+  </g>
+
+  <text class="note" x="430" y="150" text-anchor="middle">driven side swings around</text>
+  <text class="sub"  x="430" y="170" text-anchor="middle">tighter, controlled turns near walls</text>
+</svg>

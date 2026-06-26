@@ -33,7 +33,8 @@ you hit when you try to make an X-Drive do something precise:
 | [Holonomic motion](#4-holonomic-motion) | Driving and following paths in any direction |
 | [Driver replay](#5-driver-replay) | Turning a practice run into an autonomous routine |
 
-The rest of this page walks through each one.
+The rest of this page walks through each one. For the hands-on side, function by
+function, with code and tuning advice, see the **[Usage Guide](docs/usage_guide.md)**.
 
 ---
 
@@ -143,11 +144,42 @@ It's a macro system for the whole robot.
 
 ## Project Structure
 
+**Chassis & motion**
+
 | Path | What it does |
 | --- | --- |
-| `include/chassis.h`, `src/robot/chassis.cpp` | Core chassis controller, odometry task, holonomic kinematics |
-| `include/PID.h`, `src/robot/controllers/PID.cpp` | The custom PID controller |
+| `include/chassis.h` | Public interface for the chassis controller |
+| `src/robot/chassis.cpp` | Core chassis controller and holonomic kinematics |
+| `src/robot/odometry.cpp` | Background odometry task and pose tracking |
+| `src/robot/motions.cpp` | Path-following and point-to-point movement routines |
 | `include/motion_handler.h`, `src/robot/motion_handler.cpp` | Queues and manages async movements |
+
+**Control & estimation**
+
+| Path | What it does |
+| --- | --- |
+| `include/PID.h`, `src/robot/controllers/PID.cpp` | The custom PID controller |
+| `include/hololib/gain_scheduler.h`, `src/robot/gain_scheduler.cpp` | Error-threshold-based PID gain scheduling |
+| `include/hololib/pose_ekf.h` | Extended Kalman Filter for robot pose estimation |
+| `include/hololib/encoder_filter.h`, `src/robot/encoder_filter.cpp` | 1D Kalman filter for smoothing raw encoder values |
+| `include/hololib/tracking_wheel.h` | Tracking-wheel configuration and orientation |
+
+**Localization & paths**
+
+| Path | What it does |
+| --- | --- |
+| `include/hololib/pose.h` | Pose and velocity component types |
+| `include/hololib/path.h`, `src/robot/path_parser.cpp` | Path point types and path-file parsing |
+| `include/distanceReset.h`, `src/localization/distanceReset.cpp` | Distance-sensor-based odometry reset |
+| `include/hololib/obstacle.h`, `src/robot/obstacle_manager.cpp` | Field obstacle representation and avoidance |
+
+**Subsystems & utilities**
+
+| Path | What it does |
+| --- | --- |
+| `include/hololib/config.h` | Chassis dimension and hardware constants |
+| `include/hololib/replay.h`, `src/robot/replay.cpp` | Macro recording and playback of poses/velocities |
+| `include/Subsystems/modular_lift.h`, `src/robot/controllers/modular_lift.cpp` | Configurable lift subsystem with background control task |
 | `tools/sim_auton.py` | Python tool to visualize and debug autonomous routes in the browser |
 
 ---
