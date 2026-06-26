@@ -5,13 +5,18 @@
 Website with documentation and useful information can be found here: https://calhighrobotics.github.io/HoloLib/
 
 HoloLib runs on top of [PROS](https://pros.cs.purdue.edu/) and uses the
-[Eigen](https://eigen.tuxfamily.org/) linear-algebra library for the math.
+[Eigen](https://eigen.tuxfamily.org/) linear-algebra library for vectorization.
 It handles the hard parts of driving an X-Drive well: knowing where the robot
 is, getting it where you want it, and keeping it from running into things.
 
 It is built for competition, but the goal of this page is simpler than that:
 explain how each piece actually works so you can use it (and tune it) without
 guessing.
+
+
+## Acknowledgements
+
+I would also like to acknowledge Lemlib being a big inspiration to the layout and format of the library. The chassis object structure was inspired by my time of using lemlib for my own autonomous routines.
 
 ---
 
