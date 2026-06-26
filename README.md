@@ -34,7 +34,7 @@ Control your X-Drive robot easily with native coordinate transformations:
 ### 5. Driver Replay System
 Log driver actions during practice runs and replay them during the autonomous period. The logger EKF positions, while the replay engine reconstructs driver movements, giving you a repeatable autonomous macro system.
 
-**Currently the replay system only logs positions and velocities, joystick mapping is not enabled as to avoid buffer**
+**Currently the replay system only logs positions and velocities, joystick mapping is not enabled as to avoid buffer overflow**
 ---
 
 ## Project Structure
