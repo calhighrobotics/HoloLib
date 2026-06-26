@@ -57,6 +57,15 @@ WARN_AS_ERROR          = NO
 INPUT                  = ../README.md \
                          ../include/main.h \
                          ../include/chassis.h \
+                         ../include/hololib/pose.h \
+                         ../include/hololib/path.h \
+                         ../include/hololib/config.h \
+                         ../include/hololib/tracking_wheel.h \
+                         ../include/hololib/pose_ekf.h \
+                         ../include/hololib/encoder_filter.h \
+                         ../include/hololib/gain_scheduler.h \
+                         ../include/hololib/obstacle.h \
+                         ../include/hololib/replay.h \
                          ../include/motion_handler.h \
                          ../include/PID.h \
                          ../include/distanceReset.h \
