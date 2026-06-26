@@ -28,6 +28,8 @@ jobs:
           sed -i 's/PROJECT_NAME           = "My Project"/PROJECT_NAME           = "HoloLib"/g' Doxyfile
           sed -i 's/INPUT                  =/INPUT                  = include/g' Doxyfile
           sed -i 's/RECURSIVE              = NO/RECURSIVE              = YES/g' Doxyfile
+          # EXCLUDE THIRD-PARTY DEPENDENCIES
+          sed -i 's|EXCLUDE_PATTERNS      =|EXCLUDE_PATTERNS      = */Eigen/* */pros/* */okapi/*|g' Doxyfile
           sed -i 's/GENERATE_HTML          = NO/GENERATE_HTML          = YES/g' Doxyfile
           sed -i 's/GENERATE_LATEX         = YES/GENERATE_LATEX         = NO/g' Doxyfile
           sed -i 's/GENERATE_TREEVIEW      = NO/GENERATE_TREEVIEW      = YES/g' Doxyfile
