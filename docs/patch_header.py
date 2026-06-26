@@ -28,6 +28,8 @@ INJECT = """\
   DoxygenAwesomeInteractiveToc.init()
   DoxygenAwesomeTabs.init()
 </script>
+<!-- HoloLib title hero + scroll-reveal (self-initializing) -->
+<script type="text/javascript" src="$relpath^holo-enhance.js"></script>
 """
 
 

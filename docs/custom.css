@@ -389,12 +389,138 @@ div.contents table.markdownTable tr:hover td {
     transform: translateY(-1px);
 }
 
+/* ===========================================================================
+   Title hero + scroll reveal   (markup injected by holo-enhance.js)
+   A full-height "holographic" landing block on the main page that the reader
+   scrolls past to flow smoothly into the documentation.
+   =========================================================================== */
+
+/* On the main page the hero stands in for the page title, so hide Doxygen's
+   own small header title block there. */
+html.holo-mainpage #doc-content > .header { display: none; }
+
+.holo-hero {
+    position: relative;
+    min-height: calc(100vh - var(--top-height) - 24px);
+    margin: -16px 0 2.6em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    border-radius: var(--border-radius-large);
+    overflow: hidden;
+    isolation: isolate;
+    color: #ffffff;
+}
+
+/* Animated gradient field + two slow-floating holographic orbs */
+.holo-hero__bg {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background: linear-gradient(120deg, #2a247e 0%, #4640c4 38%, #6f4fd6 70%, #8b6cf0 100%);
+    background-size: 220% 220%;
+    animation: holo-gradient-pan 16s ease infinite;
+}
+.holo-hero__bg::before,
+.holo-hero__bg::after {
+    content: "";
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(42px);
+    opacity: 0.55;
+    z-index: -1;
+}
+.holo-hero__bg::before {
+    width: 340px; height: 340px;
+    background: #9a95ff;
+    top: -70px; left: -50px;
+    animation: holo-float-a 13s ease-in-out infinite;
+}
+.holo-hero__bg::after {
+    width: 430px; height: 430px;
+    background: #b46cf0;
+    bottom: -130px; right: -70px;
+    animation: holo-float-b 17s ease-in-out infinite;
+}
+
+.holo-hero__inner {
+    padding: 2em 1.4em;
+    animation: holo-fade-up 0.8s ease both;
+}
+.holo-hero__title {
+    margin: 0;
+    font-size: clamp(46px, 9vw, 104px);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -2px;
+    background: linear-gradient(90deg, #ffffff, #e7e6fb 50%, #ffffff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
+}
+.holo-hero__tagline {
+    max-width: 32ch;
+    margin: 0.75em auto 0;
+    font-size: clamp(15px, 2.2vw, 21px);
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.92);
+}
+.holo-hero__scroll {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2.6em;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 12.5px;
+    letter-spacing: 0.6px;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+.holo-hero__scroll:hover { color: #ffffff; }
+.holo-hero__chevron {
+    font-size: 22px;
+    animation: holo-bounce 1.8s ease-in-out infinite;
+}
+
+@keyframes holo-float-a {
+    0%, 100% { transform: translate(0, 0); }
+    50%      { transform: translate(42px, 32px); }
+}
+@keyframes holo-float-b {
+    0%, 100% { transform: translate(0, 0); }
+    50%      { transform: translate(-52px, -30px); }
+}
+@keyframes holo-bounce {
+    0%, 100% { transform: translateY(0);   opacity: 0.85; }
+    50%      { transform: translateY(7px); opacity: 1; }
+}
+
+/* ---- Scroll-reveal blocks ---------------------------------------------- */
+.holo-reveal {
+    opacity: 0;
+    transform: translateY(26px);
+    transition: opacity 0.6s ease, transform 0.6s ease;
+    will-change: opacity, transform;
+}
+.holo-reveal.holo-in {
+    opacity: 1;
+    transform: none;
+}
+
 /* ---- Respect reduced-motion -------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
     *,
     #top,
     #top::after,
-    div.contents {
+    div.contents,
+    .holo-hero__bg,
+    .holo-hero__bg::before,
+    .holo-hero__bg::after,
+    .holo-hero__inner,
+    .holo-hero__chevron {
         animation: none !important;
         transition: none !important;
     }
@@ -404,6 +530,11 @@ div.contents table.markdownTable tr:hover td {
     div.contents blockquote:hover,
     #nav-tree .item:hover,
     .memitem:hover .memtitle {
+        transform: none !important;
+    }
+    /* Never leave reveal blocks stuck invisible. */
+    .holo-reveal {
+        opacity: 1 !important;
         transform: none !important;
     }
 }

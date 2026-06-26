@@ -134,8 +134,6 @@ It's a macro system for the whole robot.
 > inputs aren't recorded, on purpose, to keep the log from overflowing the
 > buffer.
 
----
-
 ## Project Structure
 
 | Path | What it does |
