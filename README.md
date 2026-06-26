@@ -30,6 +30,7 @@ The rest of this page walks through each one.
 
 ---
 
+<<<<<<< HEAD
 ## 1. Pose EKF Odometry
 
 To do anything in autonomous, the robot has to know where it is on the field.
@@ -134,6 +135,11 @@ It's a macro system for the whole robot.
 > inputs aren't recorded, on purpose, to keep the log from overflowing the
 > buffer.
 
+=======
+### 5. Driver Replay System
+Log driver actions during practice runs and replay them during the autonomous period. The logger EKF positions, while the replay engine reconstructs driver movements, giving you a repeatable autonomous macro system.
+Currently the replay system only logs positions and velocities, joystick mapping is not enabled as to avoid buffer overflow
+>>>>>>> 59f9b42e6d357f0ed09ad0a4c6e923af8e7a53db
 ---
 
 ## Project Structure
