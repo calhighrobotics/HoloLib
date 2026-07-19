@@ -132,7 +132,7 @@ The PID controller has a few extra features once you outgrow the basics:
 sign-flip reset (dumps the integral when you cross the target so it doesn't
 carry stale windup), an integral limit, a windup range, and a filtered
 derivative. You usually don't need to touch these, but they're there in
-[PID.h](include/PID.h) when you do.
+[PID.hpp](include/PID.hpp) when you do.
 
 ### Movement parameters
 
@@ -612,7 +612,7 @@ poses (inches). Drop them in, then switch avoidance on:
 chassis.addObstacle(36, 36, 6);   // something at (36, 36), 6-inch radius
 chassis.addObstacle(48, 12, 5);
 
-chassis.setAvoidanceMode(Chassis::AvoidanceMode::On);
+obstacles.setAvoidanceMode(AvoidanceMode::On);
 ```
 
 With avoidance on, `moveToPoint`, `moveToPose`, `moveRelative`, and `followPath`
@@ -634,7 +634,7 @@ You tune that push-and-pull with `setPotentialFieldParams`:
 
 ```cpp
 //                          ka   kr    influenceRadius
-chassis.setPotentialFieldParams(5.0f, 50.0f, 15.0f);
+obstacles.setPotentialFieldParams(5.0f, 50.0f, 15.0f);
 ```
 
 - **`ka`**, how strongly the target pulls. Too low and obstacles win and the

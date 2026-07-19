@@ -1,0 +1,26 @@
+---
+
+# clang-format documentation
+# http://clang.llvm.org/docs/ClangFormat.html
+# http://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
+# Preexisting formats:
+# LLVM
+# Google
+# Chromium
+# Mozilla
+# WebKit
+# Microsoft
+# GNU
+
+Language:        Cpp
+BasedOnStyle: LLVM
+ColumnLimit:     120
+AccessModifierOffset: -4
+IndentWidth:     4 
+TabWidth: 4
+PointerAlignment: Left
+AlignAfterOpenBracket: true
+BinPackParameters: OnePerLine
+AlignArrayOfStructures: Left
+Standard: Latest
