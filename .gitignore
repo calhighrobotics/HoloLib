@@ -27,3 +27,6 @@ docs/doxygen-awesome*.js
 
 # Python
 __pycache__
+
+# Claude Code (local agent guidance, not part of the template)
+CLAUDE.md
