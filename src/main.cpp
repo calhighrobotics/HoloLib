@@ -114,22 +114,99 @@ liftlib::Subsystem clawRotationLift(
                           .gearset = pros::MotorGears::green}},
     clawRotationPID);
 
-// clawGripper (port 10): opens and closes the claw -- a different motion
-// entirely from clawRotation, not a pivot to ceiling/ground. Still on raw
-// hold-buttons (B/Y below) for now, not this PID -- this Subsystem exists but
-// nothing calls moveTo/hold/setOutput on it yet. The 2.7:1 ratio and the
-// travel range are both unconfirmed for this mechanism; don't trust them
-// until measured against what open/close actually is on this claw.
-liftlib::PID clawGripperPID(/*kP=*/0.4f, /*kI=*/0.0f, /*kD=*/0.02f, /*threshold=*/2.0f);
-liftlib::Subsystem clawGripperLift(
-    {liftlib::MotorConfig{.port = 10,
-                          .gear_ratio = 1.0f / 2.7f,
+// clawGripper (port 10) is a flex-wheel roller pair, not a positional
+// mechanism -- it just spins one way or the other to pull/push game pieces,
+// with no target angle to hold. No PID applies here; it's driven by raw
+// move_voltage on the B/Y buttons below, which is already correct as-is.
+
+// --- Elevator lift PID subsystem (liftlib) ----------------------------------
+// liftMotors (ports 6/-7) is a CASCADE mechanism -- the same LiftMechanism
+// hololib::ModularLift (my_lift, below) was built for -- but my_lift is never
+// actually commanded anywhere (only my_lift.cancel() is called, in
+// disabled()); R1/R2 drive these motors open loop instead. This gives the
+// elevator an actual tunable PID, same pattern as clawRotationLift: build
+// first, tune with a manual moveTo(), wire buttons later.
+//
+// Units: INCHES of vertical travel, not degrees -- this is a cascade (a
+// winch: the motor spins a spool, the spool pays out string/chain, the carriage
+// rises a linear distance). Degrees would only make sense for a mechanism that
+// pivots, like the claw. Correction from an earlier version of this comment:
+// it claimed ModularLift::getLiftRadians() confirmed gear_ratio carries over
+// as "output degrees", but that's wrong for a CASCADE specifically --
+// ModularLift::moveTo() for a CASCADE takes raw, un-scaled motor degrees as
+// its target (see controlLoopImpl() in modular_lift.cpp: `x(pos, vel)` is
+// built straight from motor.get_position(), gear_ratio is never applied to
+// it). gear_ratio/spool_radius in LiftConfig are only ever read by
+// getLiftRadians(), which only runs for FOUR_BAR/SIX_BAR/VIRTUAL feedforward
+// -- for a CASCADE they're dead config fields today. So there's no existing
+// convention to reuse here; this builds the motor-degrees -> inches
+// conversion itself:
+//
+//   inches = motor_degrees * gear_ratio(12/84, output-rotations-per-motor-
+//            rotation) * (pi/180, degrees->radians) * spool_radius(inches)
+//
+// since arc length = radius * angle_in_radians. spool_radius = 1.5f is
+// LiftConfig::spool_radius's value below, reused as a literal for the same
+// reason gear_ratio is (LiftConfig isn't declared yet at this point in the
+// file). Measure spool_radius directly (half the spool's diameter) if 1.5"
+// isn't actually what's on this robot -- it's a physical constant, not
+// something to tune.
+//
+// Feedforward::constant, not cosine: a cascade's load doesn't change with
+// height the way a pivoting arm's does. kG below is a unit conversion, not a
+// fresh measurement -- ModularLift's own feedforward (kG_base * mass * 9.81,
+// see LiftConfig below) computes in millivolts, but liftlib's default Voltage
+// OutputMode wants -127..127, so it's divided by the same 12000/127 scale
+// factor used for the joystick elsewhere in this file: 1750 / (12000/127) ~=
+// 18.5. Verify by watching whether liftLift holds height without sagging or
+// climbing, same as clawRotation's kG.
+//
+// Gain schedule, not a single PID: a cascade lift is floppier extended than
+// retracted, so one set of gains ends up either too soft at the top or too
+// aggressive at the bottom -- same reason xSched/ySched/thetaSched pick gains
+// by error magnitude above. liftlib::Subsystem's schedule instead picks by
+// *position* (now inches of height), and interpolates linearly between the
+// two surrounding points rather than snapping at a boundary.
+//
+// Real measured values (replacing the earlier LiftConfig-borrowed guesses):
+// no external gearbox between motor and spool (direct drive, ratio 1:1), and
+// spool radius is 0.4". liftLift.initialize() tares to 0 wherever the lift
+// sits at boot (fully retracted, the claw at 6.5" off the ground) -- so
+// moveTo() targets and the schedule below are in that from-boot inches space,
+// not the raw real-world height off the floor.
+//
+// Only two positions are ever actually commanded -- 9.5" and 19" (the claw's
+// two working heights) -- the lift is never moveTo()'d back to 0 (retracted)
+// under PID, so there's nothing to tune a gain point there for. Two points is
+// enough for the schedule either way: liftlib interpolates between whichever
+// two points surround the live position and holds flat outside them, so a
+// target below 9.5" just runs the 9.5" gains rather than needing a third
+// point to cover it.
+//
+// threshold is 1.0" for now (down from the old degrees-era 2.0f) -- still a
+// guess, tune it once real gains are in.
+//
+// Tune each point independently: oscillation-hunt kP/kD with moveTo(9.5) by
+// itself first, then moveTo(19) by itself -- expect 19" (more extended) to
+// want less kP than 9.5", since the same motor torque swings a
+// fully-extended cascade faster than a partially-retracted one.
+constexpr float LIFT_SPOOL_RADIUS_IN = 0.4f; // measured
+constexpr float LIFT_GEAR_RATIO = 1.0f; // direct drive, no external reduction
+constexpr float LIFT_INCHES_PER_MOTOR_DEGREE =
+    LIFT_GEAR_RATIO * (M_PI / 180.0f) * LIFT_SPOOL_RADIUS_IN;
+liftlib::Subsystem liftLift(
+    {liftlib::MotorConfig{.port = 6,
+                          .gear_ratio = LIFT_INCHES_PER_MOTOR_DEGREE,
                           .brakeType = pros::E_MOTOR_BRAKE_HOLD,
-                          .gearset = pros::MotorGears::green}},
-    clawGripperPID);
-
-
-
+                          .gearset = pros::MotorGears::blue},
+     liftlib::MotorConfig{.port = -7,
+                          .gear_ratio = LIFT_INCHES_PER_MOTOR_DEGREE,
+                          .brakeType = pros::E_MOTOR_BRAKE_HOLD,
+                          .gearset = pros::MotorGears::blue}},
+    std::vector<liftlib::Subsystem::GainPoint>{
+        {liftlib::PID(/*kP=*/10.0f, /*kI=*/0.0f, /*kD=*/0.0f, /*threshold=*/1.0f), /*position_in=*/10.0f},
+        {liftlib::PID(/*kP=*/1.0f, /*kI=*/0.0f, /*kD=*/0.0f, /*threshold=*/1.0f), /*position_in=*/19.0f},
+    });
 
 
 
@@ -179,10 +256,9 @@ void initialize() {
     chassis.calibrate();
     odom.startTask();
 
-    // Tares each claw motor and seeds its position reading. Whatever the claw
-    // is resting at when the program starts becomes 0 for that subsystem.
+    // Tares the pivot motor and seeds its position reading. Whatever the claw
+    // is resting at when the program starts becomes 0 for this subsystem.
     clawRotationLift.initialize();
-    clawGripperLift.initialize();
 
     // clawRotation pivots (it can point at the ceiling or the ground), so the
     // torque needed to hold it depends on angle -- Cosine, not a constant push.
@@ -195,6 +271,15 @@ void initialize() {
     //       wrong horizontal will bias the hold in one direction no matter
     //       what kG is.
     clawRotationLift.setFeedforward(liftlib::Feedforward::cosine(/*kG=*/0.0f, /*horizontal=*/0.0f, /*degreesPerUnit=*/1.0f));
+
+    // Tares the elevator and seeds its position reading, same as clawRotationLift.
+    liftLift.initialize();
+
+    // Constant, not cosine -- a cascade's load doesn't change with height. kG is
+    // a unit conversion from ModularLift's own kG_base (see comment where liftLift
+    // is declared), not a fresh measurement -- verify by watching whether it
+    // holds height without sagging or climbing.
+    liftLift.setFeedforward(liftlib::Feedforward::constant(/*kG=*/18.5f));
 
 
     // Set PID gains for chassis
@@ -230,11 +315,8 @@ void initialize() {
             pros::lcd::print(3, "X Velocity: %.3f", pose.velocity.vx);
             pros::lcd::print(4, "Y Velocity: %.3f", pose.velocity.vy);
             pros::lcd::print(5, "Theta Velocity: %.3f", pose.velocity.w);
-            // Read these while jogging the claw by hand (or with the old B/Y/L1/L2
-            // hold buttons in opcontrol) to find its real end-of-travel degrees --
-            // that's what addPosition() should be called with once known.
             pros::lcd::print(6, "Claw rot: %.2f", clawRotationLift.getPosition());
-            pros::lcd::print(7, "Claw grip: %.2f", clawGripperLift.getPosition());
+            pros::lcd::print(7, "Lift (in): %.2f", liftLift.getPosition());
             pros::delay(50);
         }
     });
@@ -272,7 +354,16 @@ void autonomous() {
     // chassisAsync(hololib::turnToHeading(90));
     // hololib::motion_handler::waitUntilDone();
 
-    // --- clawRotation PID tuning -------------------------------------------
+    // --- clawRotation: lock in place while the lift is tested ---------------
+    // Re-tare, then hold actively at wherever the claw is resting so it
+    // doesn't sag or drift under gravity while liftLift's test below runs.
+    // This replaces the earlier 90-degree tuning moveTo() for now -- that
+    // block is preserved below, commented out, to go back to once the lift
+    // test isn't the priority.
+    clawRotationLift.initialize();
+    clawRotationLift.holdActively();
+
+    // --- clawRotation PID tuning (paused -- see above) -----------------------
     // Blocking moveTo: turns 90 degrees and waits (up to 3s) for it to settle
     // before autonomous() returns, so the LCD's "Claw rot" reading (line 6)
     // shows where it actually stopped. Sign is a guess -- if it swings toward
@@ -283,15 +374,32 @@ void autonomous() {
     // come back and tune kG on the Feedforward in initialize() by watching
     // whether it holds the 90-degree position or sags after settling.
     //
-    // Comment this block back out and restore the two lines above once tuned.
+    // clawRotationLift.initialize();
+    // clawRotationLift.moveTo(90.0f, /*async=*/false, /*timeout=*/3000);
 
-    // Re-tare right before the move: Subsystem::reset() (called internally by
-    // moveTo) only clears PID state, not the encoder, so without this each
-    // test run would start from wherever the claw drifted to on the last run
-    // or in opcontrol, not a clean 0. initialize() is what actually re-zeros
-    // the position -- same call used at boot, just run again here.
-    clawRotationLift.initialize();
-    clawRotationLift.moveTo(90.0f, /*async=*/false, /*timeout=*/3000);
+    // --- liftLift PID tuning -------------------------------------------------
+    // Blocking moveTo to the lower of the two real working heights (9.5",
+    // see the gain-schedule comment above liftLift's declaration). Waits (up
+    // to 3s) for it to settle before autonomous() returns, so the LCD's
+    // "Lift (in)" reading (line 7) shows where it actually stopped.
+    //
+    // Direction is a guess, same as the claw's was: ports are {6, -7}, the
+    // same pair R1/R2 already drive raw in opcontrol where R1 ("Lift up")
+    // sends +12000 to both -- so a positive moveTo() target SHOULD raise the
+    // lift the same way, but confirm by watching it, not just reading the
+    // LCD number. If it drives down/into itself instead of up, negate both
+    // ports' signs in liftLift's MotorConfig (6 -> -6, -7 -> 7) rather than
+    // negating the target here, so moveTo() and the R1/R2 raw jog stay
+    // pointed the same way as each other.
+    //
+    // Tune kP/kD on the 9.5" GainPoint above first (raise kP until it gets
+    // close with a little overshoot, add just enough kD to kill the
+    // overshoot), then come back and tune kG on liftLift's Feedforward in
+    // initialize() by watching whether it holds 9.5" or sags after settling.
+    // Once 9.5" is clean, change the 9.5f below to 19.0f and repeat for the
+    // top GainPoint.
+    liftLift.initialize();
+    liftLift.moveTo(10.0f, /*async=*/false, /*timeout=*/5000);
 }
 
 

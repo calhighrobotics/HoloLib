@@ -10,6 +10,255 @@ verified on the robot or only compiled.
 
 ---
 
+## 2026-09-05
+
+### 1. Removed `clawGripperPID`/`clawGripperLift` — wrong control model for the mechanism
+
+User corrected a wrong assumption from the 2026-08-29 session: `clawGripper`
+(port 10) isn't a gripper jaw that opens/closes to a position — it's a
+flex-wheel roller pair that just spins in one direction or the other to
+pull/push game pieces. There is no target angle to hold, so a position PID
+(`liftlib::Subsystem`) doesn't apply to it at all. Removed the now-provably-wrong
+`clawGripperPID`/`clawGripperLift` objects entirely, along with their
+`initialize()` call and LCD readout (line 7). The raw `move_voltage` B/Y
+hold-buttons already driving this motor were correct all along and are
+untouched — nothing to fix there, only something to stop wrapping in the wrong
+abstraction.
+
+### 2. Found: the main lift has no closed-loop control active at all
+
+User asked where the lift's PID is. Traced it in
+`src/motions/controllers/modular_lift.cpp`: `ModularLift` doesn't use a `PID`
+object — it's LQR/state-feedback (`u = -config.K * (x - x_ref)`, `LiftConfig::K`
+a 1x2 gain matrix). Not a bug, just a different control law than the claw's.
+
+More importantly: **`my_lift` (the `ModularLift` instance) is never actually
+commanded to move.** A repo-wide check of `my_lift.` in `main.cpp` found only
+`my_lift.cancel()` in `disabled()`. The lift is actually driven entirely by raw
+`move_voltage` on R1/R2 through a separate `pros::MotorGroup liftMotors` on
+ports 6/-7. `ModularLift`'s constructor builds its own `pros::Motor` objects on
+those same two ports (`modular_lift.cpp:8`) — the same dual-motor-object
+pattern flagged and fixed for the claw's pivot back on 2026-08-29, except here
+it's currently harmless only because `my_lift` is never told to go anywhere.
+### 3. Built the elevator lift's `liftlib::Subsystem`/PID
+
+User pushed back on point 2 — believed a lift PID already existed somewhere in
+`liftlib` and asked whether it had been deleted. Verified via a full git-history
+grep across every version of `main.cpp` on this branch: no `liftlib::Subsystem`/
+`liftlib::PID` for the elevator (ports 6/-7) has ever existed here. `liftlib` is
+a generic toolkit, not a pre-populated one — nothing becomes "the elevator's
+controller" until something in `main.cpp` constructs a `Subsystem` wired to
+those motors, same as `clawRotationLift` had to be built from scratch for the
+claw. Built now, following the same skeleton-first pattern: PID + `Subsystem`
+declared, `initialize()` (tare) and `setFeedforward()` wired in `initialize()`,
+LCD readout added (line 7), **no button wiring yet** — R1/R2 stay on raw
+`move_voltage` until this is tuned, same staging as the claw went through.
+
+```cpp
+liftlib::PID liftPID(/*kP=*/1.0f, /*kI=*/0.0f, /*kD=*/0.0f, /*threshold=*/2.0f);
+liftlib::Subsystem liftLift(
+    {{.port = 6,  .gear_ratio = 12.0f/84.0f, ...},
+     {.port = -7, .gear_ratio = 12.0f/84.0f, ...}},
+    liftPID);
+```
+
+Two numbers reused rather than re-measured, since this is the same hardware
+`hololib::ModularLift`/`LiftConfig` already describes:
+- `gear_ratio = 12.0f/84.0f` is the literal `LiftConfig::gear_ratio` value
+  (can't reference that object directly, it's declared later in the file) —
+  confirmed by reading `ModularLift::getLiftRadians()` in
+  `src/motions/controllers/modular_lift.cpp` that it applies gear_ratio with
+  the same output-per-motor-rotation convention `liftlib::Subsystem` uses, so
+  it carries over directly.
+- `Feedforward::constant(18.5f)`, not `cosine` — a cascade's holding load
+  doesn't vary with height the way a pivoting arm's does, unlike the claw.
+  `18.5` is a **unit conversion**, not an independent measurement:
+  `ModularLift::calculateFeedforward` computes `kG_base * mass * 9.81` in
+  millivolts (`1750` for this config), but `liftlib`'s default Voltage
+  `OutputMode` wants -127..127, so it's divided by the same `12000/127` scale
+  factor used for the joystick elsewhere in this file. Needs verifying the same
+  way as the claw's `kG` — watch whether it holds height without sagging or
+  climbing.
+
+**Not tuned or tested on hardware yet.** `kP`/`kD` are untuned placeholders
+(`1.0f`/`0.0f`) — same oscillation-hunt process as the claw applies here too.
+No autonomous test routine was added for it yet (the claw's tuning is still
+active in `autonomous()`); ask if one should be added, or wait until the claw
+rotation is finished.
+
+### 4. Switched `liftLift` from a single PID to a gain schedule
+
+User confirmed the lift runs on two full motors (ports 6/-7, `liftMotors`,
+already correct in point 3) and asked for multiple PIDs across the lift's
+travel, the way HoloLib's own `xSched`/`ySched`/`thetaSched` pick gains by
+magnitude rather than using one fixed set. `liftlib::Subsystem` has a built-in
+equivalent for this — a constructor overload taking
+`std::vector<Subsystem::GainPoint>` (`GainPoint = std::pair<PID, float
+position>`) instead of a single `PID`. Gains are interpolated linearly between
+the two surrounding points and held flat outside the outermost ones; only kP/
+kI/kD come from the schedule, everything else (threshold, slew, output limit)
+stays a property of the live controller. Replaced the single `liftPID` with:
+
+```cpp
+liftlib::Subsystem liftLift(
+    {{.port = 6,  .gear_ratio = 12.0f/84.0f, ...},
+     {.port = -7, .gear_ratio = 12.0f/84.0f, ...}},
+    std::vector<liftlib::Subsystem::GainPoint>{
+        {liftlib::PID(1.0f, 0.0f, 0.0f, 2.0f), 0.0f},
+        {liftlib::PID(1.0f, 0.0f, 0.0f, 2.0f), 45.0f},
+        {liftlib::PID(1.0f, 0.0f, 0.0f, 2.0f), 90.0f},
+    });
+```
+
+All three points are still the same untuned `1.0f/0.0f/0.0f` placeholder —
+this only sets up the *shape* of the schedule, tuning hasn't started. The
+0/45/90 positions are placeholders too, and are almost certainly wrong: those
+were the claw's pivot range (0-90 degrees), but the lift is a cascade, so its
+travel is in output degrees after `gear_ratio` and can span many multiples of
+360 depending on `spool_radius` and physical height — not a 90-degree arc.
+Before tuning, jog the lift to its real full extension with R1 and read the
+LCD's "Lift" line (line 7) to find the actual top-of-travel number, then
+replace 45/90 with values that actually span it. Tune bottom-to-top: hold
+each point's kP/kD fixed, oscillation-hunt with `moveTo()` near that point's
+position, then move up to the next point — expect the top of the range to
+want less kP than the bottom, since a fully-extended cascade swings faster
+under the same torque. Still no button wiring and no autonomous test routine.
+
+Build verified only (`make quick`, clean compile/link) — not tested on
+hardware.
+
+### 5. `liftLift` units: degrees → inches, and a correction to point 3/4's `gear_ratio` reasoning
+
+User asked why the elevator's position was in degrees at all — it's a
+cascade/winch (vertical lift for stacking game pieces), so height should read
+in inches, not motor-shaft degrees. Correct: degrees only made sense for the
+claw's pivot.
+
+While fixing it, found that point 3's claim was wrong: I'd written that
+`ModularLift::getLiftRadians()` "confirmed gear_ratio carries over the same
+way" — but for `LiftMechanism::CASCADE` specifically, `ModularLift::moveTo()`
+targets **raw, unscaled motor degrees** (`controlLoopImpl()` in
+`modular_lift.cpp` builds its LQR state `x(pos, vel)` straight from
+`motor.get_position()`; `gear_ratio` is never applied to it for a cascade).
+`gear_ratio`/`spool_radius` in `LiftConfig` are only read by
+`getLiftRadians()`, which only runs for the `FOUR_BAR`/`SIX_BAR`/`VIRTUAL`
+feedforward branch — for a cascade they're currently dead fields. So there was
+no existing convention to reuse; built the motor-degrees → inches conversion
+directly instead:
+
+```cpp
+constexpr float LIFT_SPOOL_RADIUS_IN = 1.5f;       // = LiftConfig::spool_radius
+constexpr float LIFT_GEAR_RATIO = 12.0f / 84.0f;   // output-rotations-per-motor-rotation
+constexpr float LIFT_INCHES_PER_MOTOR_DEGREE =
+    LIFT_GEAR_RATIO * (M_PI / 180.0f) * LIFT_SPOOL_RADIUS_IN;
+```
+
+used as both motors' `gear_ratio` — arc length = radius × angle-in-radians, so
+motor degrees → output degrees (`× 12/84`) → radians (`× π/180`) → inches
+(`× spool_radius`). `spool_radius = 1.5f` is reused as a literal from
+`LiftConfig` below (same reason `gear_ratio`'s literal was reused: `LiftConfig`
+isn't declared yet at this point in the file) — flagged in-code to be measured
+directly (half the spool diameter) if 1.5" isn't actually correct for this
+robot, since it's a physical constant rather than something to tune.
+
+Also updated the gain schedule's placeholder positions from 0/45/90 (degrees)
+to 0/12/24 (inches) and the LCD label to "Lift (in)". Flagged that the
+`threshold=2.0f` on all three PID points was picked back when the unit was
+degrees — 2 inches of tolerance is probably too loose for a scoring
+mechanism and needs revisiting once real gains are being tuned. Unlike the
+claw's degree range (which needed jogging-and-reading-the-LCD to find), the
+schedule's real positions can be measured directly with a tape measure on the
+cascade's physical stroke, retracted to fully extended.
+
+Build verified only (`make quick`, clean compile/link) — not tested on
+hardware.
+
+### 6. Replaced borrowed `liftLift` constants with real measurements
+
+User confirmed there's no external gearbox between the lift motors and the
+spool (direct drive) and measured the spool radius at 0.4" — both replace the
+earlier values that were only ever borrowed literals from `LiftConfig`
+(1.5"/12:84), never independently verified for this mechanism:
+
+```cpp
+constexpr float LIFT_SPOOL_RADIUS_IN = 0.4f; // measured
+constexpr float LIFT_GEAR_RATIO = 1.0f;      // direct drive, no external reduction
+```
+
+Also got real travel numbers: claw parallel to the ground reads 6.5" off the
+floor at full retraction, 25.5" at full extension — a 19" span. Since
+`liftLift.initialize()` tares to 0 wherever the lift sits at boot (assumed to
+be fully retracted), the subsystem's own position space runs ~0"-19", not the
+real-world 6.5"-25.5" — replaced the gain schedule's placeholder positions
+(0"/12"/24") with 0"/9.5"/19" to actually span it, and dropped `threshold`
+from the old degrees-era `2.0f` to `1.0f` (still a guess, needs tuning same as
+kP/kD once real gains go in).
+
+Build verified only (`make quick`, clean compile/link) — not tested on
+hardware.
+
+### 7. Dropped the 0" gain point — the lift never actually targets it
+
+User corrected point 6: the lift is only ever commanded to two heights, 9.5"
+and 19" — it's never `moveTo()`'d back to 0" (fully retracted) under PID, so
+there's nothing to tune a gain point there for. Removed the 0" `GainPoint`,
+leaving just:
+
+```cpp
+std::vector<liftlib::Subsystem::GainPoint>{
+    {liftlib::PID(1.0f, 0.0f, 0.0f, 1.0f), 9.5f},
+    {liftlib::PID(1.0f, 0.0f, 0.0f, 1.0f), 19.0f},
+};
+```
+
+Two points is still a real schedule — `liftlib` interpolates between whichever
+two points surround the live position and holds flat outside them, so this
+just means "the same gains apply below 9.5\" as at 9.5\"" rather than needing
+a third point to cover territory that's never actually visited under PID
+control.
+
+Build verified only (`make quick`, clean compile/link) — not tested on
+hardware.
+
+### 8. Added an autonomous test routine for `liftLift`
+
+Added a blocking `liftLift.moveTo(9.5f, ...)` test in `autonomous()`,
+directly after the existing claw test — same pattern: `initialize()` right
+before the move to re-tare (so each run starts clean, not wherever it drifted
+to last), 3s timeout, LCD's "Lift (in)" line shows where it actually stopped.
+
+Direction is flagged as a guess, same caveat as the claw's originally had:
+`liftLift`'s ports are `{6, -7}`, the same pair R1/R2 already drive raw in
+`opcontrol()` where R1 ("Lift up") sends `+12000` to both — so a positive
+`moveTo()` target *should* raise the lift the same way, but this needs
+confirming by eye on hardware, not assumed from the LCD number alone. If it's
+backwards, the fix is negating both ports' signs in `liftLift`'s
+`MotorConfig` (`6 → -6`, `-7 → 7`), not negating the target — that way
+`moveTo()` and the R1/R2 raw jog keep pointing the same direction as each
+other rather than disagreeing.
+
+Comment also stages the next step once 9.5" is tuned: swap the target to
+`19.0f` to tune the top `GainPoint` the same way.
+
+Build verified only (`make quick`, clean compile/link) — **direction not yet
+confirmed on hardware.**
+
+### 9. Autonomous now locks the claw before testing the lift
+
+User asked for the claw (motor 9) to be locked in place first, then the lift
+tested. Replaced the claw's 90-degree tuning `moveTo()` in `autonomous()`
+with `clawRotationLift.initialize(); clawRotationLift.holdActively();` — tares
+then actively holds wherever the claw is resting, so it doesn't sag/drift
+under gravity while the `liftLift` test below it runs. The original 90-degree
+tuning block is preserved directly below, commented out, to switch back to
+once the lift test isn't the priority. `autonomous()` now runs: lock claw →
+`liftLift.moveTo(9.5f, ...)`.
+
+Build verified only (`make quick`, clean compile/link) — not tested on
+hardware.
+
+---
+
 ## 2026-08-29
 
 ### 1. Repo reorganized to work directly against the org repo
