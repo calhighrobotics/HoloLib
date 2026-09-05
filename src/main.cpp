@@ -106,7 +106,7 @@ pros::Motor intake = pros::Motor(8, pros::MotorGear::blue);
 // visibly overshoots and oscillates back and forth around 90 before settling
 // (or doesn't settle at all), back off to roughly 50-60% of that value and only
 // then start adding kD to damp the overshoot out.
-liftlib::PID clawRotationPID(/*kP=*/1.0f, /*kI=*/0.0f, /*kD=*/0.0f, /*threshold=*/2.0f);
+liftlib::PID clawRotationPID(/*kP=*/15.0f, /*kI=*/0.0001f, /*kD=*/16.0f, /*threshold=*/2.0f);
 liftlib::Subsystem clawRotationLift(
     {liftlib::MotorConfig{.port = -9, // negative reverses direction (jog, moveTo, and position readings together)
                           .gear_ratio = 12.0f / 60.0f,
